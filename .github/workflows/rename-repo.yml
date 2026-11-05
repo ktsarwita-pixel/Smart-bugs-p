@@ -1,0 +1,51 @@
+name: Rename repository to "game"
+
+# The repository was created as "Smart-bugs-p" and should be called "game".
+# GitHub's REST/GraphQL rename endpoints need account-admin rights that the
+# local API token does not carry, so the rename is performed here with the
+# workflow-scoped GITHUB_TOKEN (which can be granted `administration: write`).
+#
+# The job is idempotent: it renames only when the repository is not already
+# called "game", and it reports the outcome either way.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/rename-repo.yml
+  workflow_dispatch:
+
+permissions:
+  administration: write
+  contents: read
+
+concurrency:
+  group: rename-repo
+  cancel-in-progress: false
+
+jobs:
+  rename:
+    name: Rename repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read current repository name
+        id: current
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.name')
+          echo "current=${name}" >> "$GITHUB_OUTPUT"
+          echo "Repository is currently called '${name}'."
+
+      - name: Rename to "game"
+        if: steps.current.outputs.current != 'game'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET: game
+        run: |
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}" -f "name=${TARGET}" --jq '.name'
+          echo "Renamed to ${TARGET}. GitHub redirects the old URL automatically."
+
+      - name: Confirm
+        if: steps.current.outputs.current == 'game'
+        run: echo "Repository is already called 'game' — nothing to do."
