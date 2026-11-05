@@ -35,6 +35,8 @@ export const PLAYER = {
   staminaDrain: 14,
   staminaRegen: 22,
   fallSafeHeight: 3.2,
+  /** Health points lost per block fallen beyond the safe height. */
+  fallDamagePerBlock: 1,
   invulnerability: 0.55,
 };
 
@@ -48,10 +50,14 @@ export const ROBOT = {
   miningRange: 3.2,
   miningTime: 1.25,
   batteryMax: 100,
-  batteryDrainMining: 7.5,
+  batteryDrainMining: 3.2,
   batteryDrainIdle: 0.55,
   batteryDrainFollow: 1.5,
   batteryRecharge: 9.5,
+  /** Seconds without progress before BOLT-7 abandons a vein. */
+  mineGiveUpSeconds: 5,
+  /** Below this fraction of the battery BOLT-7 heads back to a charger. */
+  lowBatteryFraction: 0.35,
   cargoSlots: 8,
   sightRadius: 7.5,
   scanRadius: 22,
@@ -77,10 +83,15 @@ export const START_CREDITS = 60;
 export const RENDER = {
   fogNear: 18,
   fogFar: 78,
-  defaultRenderDistance: 6,
-  maxRenderDistance: 12,
+  /** Chunks kept meshed around the miner on a desktop. */
+  defaultRenderDistance: 5,
+  /** Phones get a shorter view so the frame rate stays up. */
+  mobileRenderDistance: 4,
+  maxRenderDistance: 10,
   maxPixelRatio: 2,
-  mobilePixelRatio: 1.5,
+  mobilePixelRatio: 1.35,
+  /** Milliseconds per frame the world may spend rebuilding chunks. */
+  chunkBudgetMs: 4.5,
   skyRadius: 900,
 } as const;
 

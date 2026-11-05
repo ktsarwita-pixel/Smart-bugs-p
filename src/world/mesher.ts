@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { blockDef, Block, isOpaque } from './blocks';
+import { WORLD_X, WORLD_Y, WORLD_Z } from '../core/constants';
 import { tileUV } from '../render/textures';
 import type { World } from './world';
 
@@ -138,26 +139,188 @@ export interface ChunkMeshData {
   liquid: THREE.BufferGeometry | null;
 }
 
+/**
+ * A growable float buffer.
+ *
+ * The mesher writes millions of numbers per world. Plain arrays mean a lot of
+ * garbage collector work, so the vertices live in typed arrays that are
+ * reallocated rarely.
+ */
+class FloatBuffer {
+  data: Float32Array;
+  length = 0;
+
+  constructor(capacity = 8192) {
+    this.data = new Float32Array(capacity);
+  }
+
+  private ensure(extra: number): void {
+    if (this.length + extra <= this.data.length) return;
+    let size = this.data.length * 2;
+    while (size < this.length + extra) size *= 2;
+    const next = new Float32Array(size);
+    next.set(this.data.subarray(0, this.length));
+    this.data = next;
+  }
+
+  push1(a: number): void {
+    this.ensure(1);
+    this.data[this.length++] = a;
+  }
+
+  push2(a: number, b: number): void {
+    this.ensure(2);
+    this.data[this.length++] = a;
+    this.data[this.length++] = b;
+  }
+
+  push3(a: number, b: number, c: number): void {
+    this.ensure(3);
+    this.data[this.length++] = a;
+    this.data[this.length++] = b;
+    this.data[this.length++] = c;
+  }
+
+  /** The used part of the buffer. */
+  view(): Float32Array {
+    return this.data.subarray(0, this.length);
+  }
+}
+
+/** A growable index buffer. */
+class IndexBuffer {
+  data: Uint32Array;
+  length = 0;
+
+  constructor(capacity = 8192) {
+    this.data = new Uint32Array(capacity);
+  }
+
+  private ensure(extra: number): void {
+    if (this.length + extra <= this.data.length) return;
+    let size = this.data.length * 2;
+    while (size < this.length + extra) size *= 2;
+    const next = new Uint32Array(size);
+    next.set(this.data.subarray(0, this.length));
+    this.data = next;
+  }
+
+  push6(a: number, b: number, c: number, d: number, e: number, f: number): void {
+    this.ensure(6);
+    this.data[this.length++] = a;
+    this.data[this.length++] = b;
+    this.data[this.length++] = c;
+    this.data[this.length++] = d;
+    this.data[this.length++] = e;
+    this.data[this.length++] = f;
+  }
+
+  view(): Uint32Array {
+    return this.data.subarray(0, this.length);
+  }
+}
+
 interface Buffers {
-  position: number[];
-  normal: number[];
-  uv: number[];
+  position: FloatBuffer;
+  normal: FloatBuffer;
+  uv: FloatBuffer;
   /** r = block light, g = sky light, b = shade * ao */
-  light: number[];
-  index: number[];
+  light: FloatBuffer;
+  index: IndexBuffer;
+}
+
+/**
+ * A padded snapshot of the blocks around a chunk.
+ *
+ * The mesher used to ask the world for every neighbour of every block, which
+ * meant hundreds of thousands of bounds-checked lookups per chunk. Reading the
+ * padded arrays directly is several times faster and keeps the frame budget
+ * free for the game itself.
+ */
+const PAD = 2;
+const CACHE_X = 16 + PAD * 2;
+const CACHE_Z = 16 + PAD * 2;
+const CACHE_Y = WORLD_Y;
+
+interface ChunkCache {
+  /** Block ids. */
+  blocks: Uint8Array;
+  /** 1 when the block hides the faces behind it. */
+  opaque: Uint8Array;
+  sky: Uint8Array;
+  block: Uint8Array;
+  /** World x of the local origin. */
+  ox: number;
+  oz: number;
+}
+
+const cacheBlocks = new Uint8Array(CACHE_X * CACHE_Y * CACHE_Z);
+const cacheOpaque = new Uint8Array(CACHE_X * CACHE_Y * CACHE_Z);
+const cacheSky = new Uint8Array(CACHE_X * CACHE_Y * CACHE_Z);
+const cacheBlockLight = new Uint8Array(CACHE_X * CACHE_Y * CACHE_Z);
+const chunkCache: ChunkCache = {
+  blocks: cacheBlocks,
+  opaque: cacheOpaque,
+  sky: cacheSky,
+  block: cacheBlockLight,
+  ox: 0,
+  oz: 0,
+};
+
+function cacheIndex(x: number, y: number, z: number): number {
+  return (y * CACHE_Z + z) * CACHE_X + x;
+}
+
+/** Fill the padded snapshot for the chunk at (cx, cz). */
+function fillCache(world: World, cx: number, cz: number): void {
+  const ox = cx * 16 - PAD;
+  const oz = cz * 16 - PAD;
+  chunkCache.ox = ox;
+  chunkCache.oz = oz;
+  for (let y = 0; y < CACHE_Y; y++) {
+    for (let z = 0; z < CACHE_Z; z++) {
+      const wz = oz + z;
+      const rowBase = (y * CACHE_Z + z) * CACHE_X;
+      for (let x = 0; x < CACHE_X; x++) {
+        const wx = ox + x;
+        const i = rowBase + x;
+        if (wx < 0 || wz < 0 || wx >= WORLD_X || wz >= WORLD_Z) {
+          // Outside the map the world reports air, so the border keeps the
+          // same open edges it always had.
+          cacheBlocks[i] = Block.AIR;
+          cacheOpaque[i] = 0;
+          cacheSky[i] = 0;
+          cacheBlockLight[i] = 0;
+          continue;
+        }
+        const id = world.getBlock(wx, y, wz);
+        cacheBlocks[i] = id;
+        cacheOpaque[i] = isOpaque(id) ? 1 : 0;
+        const li = world.indexOf(wx, y, wz);
+        cacheSky[i] = world.skyLight[li];
+        cacheBlockLight[i] = world.blockLight[li];
+      }
+    }
+  }
+}
+
+/** Is the cell at local (x, y, z) opaque? Handles the vertical bounds. */
+function cacheOpaqueAt(x: number, y: number, z: number): boolean {
+  if (y < 0 || y >= CACHE_Y) return true;
+  if (x < 0 || x >= CACHE_X || z < 0 || z >= CACHE_Z) return true;
+  return cacheOpaque[cacheIndex(x, y, z)] === 1;
 }
 
 const newBuffers = (): Buffers => ({
-  position: [],
-  normal: [],
-  uv: [],
-  light: [],
-  index: [],
+  position: new FloatBuffer(),
+  normal: new FloatBuffer(),
+  uv: new FloatBuffer(),
+  light: new FloatBuffer(),
+  index: new IndexBuffer(),
 });
 
 function pushQuad(
   b: Buffers,
-  world: World,
   bx: number,
   by: number,
   bz: number,
@@ -168,17 +331,20 @@ function pushQuad(
   const [u0, v0, du, dv] = tileUV(tile);
   const base = b.position.length / 3;
   const [dx, dy, dz] = face.dir;
+  // Local (padded) coordinates of the block.
+  const lx = bx - chunkCache.ox;
+  const lz = bz - chunkCache.oz;
 
   for (let c = 0; c < 4; c++) {
     const corner = face.corners[c];
     const px = bx + corner[0];
     const py = by + corner[1];
     const pz = bz + corner[2];
-    b.position.push(px, py, pz);
-    b.normal.push(dx, dy, dz);
+    b.position.push3(px, py, pz);
+    b.normal.push3(dx, dy, dz);
 
     const [tu, tv] = face.uvs[c];
-    b.uv.push(u0 + du * tu, v0 + dv * (1 - tv));
+    b.uv.push2(u0 + du * tu, v0 + dv * (1 - tv));
 
     // --- ambient occlusion + smooth light ---
     const signU = corner[face.uAxis] > 0.5 ? 1 : -1;
@@ -188,12 +354,16 @@ function pushQuad(
     const vOff: [number, number, number] = [0, 0, 0];
     vOff[face.vAxis] = signV;
 
-    const side1 = world.isOpaqueAt(px + dx + uOff[0], py + dy + uOff[1], pz + dz + uOff[2]);
-    const side2 = world.isOpaqueAt(px + dx + vOff[0], py + dy + vOff[1], pz + dz + vOff[2]);
-    const cornerOcc = world.isOpaqueAt(
-      px + dx + uOff[0] + vOff[0],
-      py + dy + uOff[1] + vOff[1],
-      pz + dz + uOff[2] + vOff[2],
+    const ax = lx + corner[0];
+    const ay = py;
+    const az = lz + corner[2];
+
+    const side1 = cacheOpaqueAt(ax + dx + uOff[0], ay + dy + uOff[1], az + dz + uOff[2]);
+    const side2 = cacheOpaqueAt(ax + dx + vOff[0], ay + dy + vOff[1], az + dz + vOff[2]);
+    const cornerOcc = cacheOpaqueAt(
+      ax + dx + uOff[0] + vOff[0],
+      ay + dy + uOff[1] + vOff[1],
+      az + dz + uOff[2] + vOff[2],
     );
     const s1 = side1 ? 1 : 0;
     const s2 = side2 ? 1 : 0;
@@ -202,35 +372,53 @@ function pushQuad(
     const aoFactor = 0.52 + ao * 0.16;
 
     // Average light of the open cells touching this vertex.
-    const lit = world.sampleLight(
-      px + dx,
-      py + dy,
-      pz + dz,
-      px + dx + uOff[0],
-      py + dy + uOff[1],
-      pz + dz + uOff[2],
-      px + dx + vOff[0],
-      py + dy + vOff[1],
-      pz + dz + vOff[2],
-      px + dx + uOff[0] + vOff[0],
-      py + dy + uOff[1] + vOff[1],
-      pz + dz + uOff[2] + vOff[2],
+    let sky = 0;
+    let block = 0;
+    let count = 0;
+    const addLight = (cx: number, cy: number, cz: number): void => {
+      if (cy < 0 || cy >= CACHE_Y) return;
+      if (cx < 0 || cx >= CACHE_X || cz < 0 || cz >= CACHE_Z) return;
+      const i = cacheIndex(cx, cy, cz);
+      if (cacheOpaque[i] === 1) return;
+      sky += cacheSky[i];
+      block += cacheBlockLight[i];
+      count++;
+    };
+    addLight(ax + dx, ay + dy, az + dz);
+    addLight(ax + dx + uOff[0], ay + dy + uOff[1], az + dz + uOff[2]);
+    addLight(ax + dx + vOff[0], ay + dy + vOff[1], az + dz + vOff[2]);
+    addLight(
+      ax + dx + uOff[0] + vOff[0],
+      ay + dy + uOff[1] + vOff[1],
+      az + dz + uOff[2] + vOff[2],
     );
+    if (count === 0) {
+      const ci = cacheIndex(
+        Math.min(Math.max(ax + dx, 0), CACHE_X - 1),
+        Math.min(Math.max(ay + dy, 0), CACHE_Y - 1),
+        Math.min(Math.max(az + dz, 0), CACHE_Z - 1),
+      );
+      sky = cacheSky[ci];
+      block = cacheBlockLight[ci];
+    } else {
+      sky /= count;
+      block /= count;
+    }
     const shade = face.shade * aoFactor;
-    b.light.push(lit.block / 15, lit.sky / 15, shade * baseBrightness);
+    b.light.push3(block / 15, sky / 15, shade * baseBrightness);
   }
 
-  b.index.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  b.index.push6(base, base + 1, base + 2, base, base + 2, base + 3);
 }
 
 function toGeometry(b: Buffers): THREE.BufferGeometry | null {
   if (b.index.length === 0) return null;
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(b.position, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(b.normal, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
-  g.setAttribute('alight', new THREE.Float32BufferAttribute(b.light, 3));
-  g.setIndex(b.index);
+  g.setAttribute('position', new THREE.BufferAttribute(b.position.view(), 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(b.normal.view(), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(b.uv.view(), 2));
+  g.setAttribute('alight', new THREE.BufferAttribute(b.light.view(), 3));
+  g.setIndex(new THREE.BufferAttribute(b.index.view(), 1));
   g.computeBoundingSphere();
   return g;
 }
@@ -238,7 +426,6 @@ function toGeometry(b: Buffers): THREE.BufferGeometry | null {
 /** Cross-shaped billboard geometry for plants and torches. */
 function pushCross(
   b: Buffers,
-  world: World,
   bx: number,
   by: number,
   bz: number,
@@ -254,9 +441,17 @@ function pushCross(
   const y0 = by + 0.02;
   const y1 = by + scaleY;
 
-  const light = world.sampleLight(bx, by, bz);
+  const lx = bx - chunkCache.ox;
+  const lz = bz - chunkCache.oz;
+  let sky = 0;
+  let block = 0;
+  if (by >= 0 && by < CACHE_Y && lx >= 0 && lx < CACHE_X && lz >= 0 && lz < CACHE_Z) {
+    const i = cacheIndex(lx, by, lz);
+    sky = cacheSky[i];
+    block = cacheBlockLight[i];
+  }
   const brightness = baseBrightness * 0.95;
-  const l = [light.block / 15, light.sky / 15, brightness];
+  const l = [block / 15, sky / 15, brightness];
 
   const planes: Array<{ ax: number; az: number; nx: number; nz: number }> = [
     { ax: half, az: half, nx: 0.7071, nz: 0.7071 },
@@ -272,12 +467,12 @@ function pushCross(
       [cx - plane.ax, y1, cz - plane.az, 0, 0],
     ];
     for (const [px, py, pz, tu, tv] of quad) {
-      b.position.push(px, py, pz);
-      b.normal.push(plane.nx, 0, plane.nz);
-      b.uv.push(u0 + du * tu, v0 + dv * tv);
-      b.light.push(l[0], l[1], l[2]);
+      b.position.push3(px, py, pz);
+      b.normal.push3(plane.nx, 0, plane.nz);
+      b.uv.push2(u0 + du * tu, v0 + dv * tv);
+      b.light.push3(l[0], l[1], l[2]);
     }
-    b.index.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    b.index.push6(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 }
 
@@ -293,29 +488,29 @@ export function buildChunkMesh(world: World, cx: number, cz: number): ChunkMeshD
   const x0 = cx * 16;
   const z0 = cz * 16;
 
+  fillCache(world, cx, cz);
+
   for (let lz = 0; lz < 16; lz++) {
     for (let lx = 0; lx < 16; lx++) {
       const wx = x0 + lx;
       const wz = z0 + lz;
       const maxY = world.columnTop(wx, wz);
       for (let wy = 0; wy <= maxY; wy++) {
-        const id = world.getBlock(wx, wy, wz);
+        const id = cacheBlocks[cacheIndex(lx + PAD, wy, lz + PAD)];
         if (id === Block.AIR) continue;
         const def = blockDef(id);
 
         if (def.render === 'cross' || def.render === 'torch') {
           const scale = def.render === 'torch' ? 0.34 : 1;
           const height = def.render === 'torch' ? 0.95 : 1;
-          pushCross(cutout, world, wx, wy, wz, def.side, scale, height, 1);
+          pushCross(cutout, wx, wy, wz, def.side, scale, height, 1);
           continue;
         }
 
         const target = def.liquid ? liquid : def.cutout ? cutout : opaque;
         for (const face of FACES) {
-          const nx = wx + face.dir[0];
           const ny = wy + face.dir[1];
-          const nz = wz + face.dir[2];
-          const neighbour = world.getBlock(nx, ny, nz);
+          const neighbour = cacheBlocks[cacheIndex(lx + PAD + face.dir[0], ny, lz + PAD + face.dir[2])];
           if (neighbour === Block.AIR) {
             // visible
           } else if (def.liquid) {
@@ -334,7 +529,7 @@ export function buildChunkMesh(world: World, cx: number, cz: number): ChunkMeshD
 
           const tile =
             face.pick === 'top' ? def.top : face.pick === 'bottom' ? def.bottom : def.side;
-          pushQuad(target, world, wx, wy, wz, face, tile, 1);
+          pushQuad(target, wx, wy, wz, face, tile, 1);
         }
       }
     }

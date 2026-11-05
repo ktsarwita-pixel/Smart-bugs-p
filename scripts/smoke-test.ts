@@ -44,7 +44,12 @@ check('world has solid blocks', solid > 100000, `solid=${solid}`);
 check('world contains ore blocks', ores > 100, `ores=${ores}`);
 check('spawn is above ground', world.terrain.spawn.y > 10, `y=${world.terrain.spawn.y}`);
 check(
-  'spawn column is not solid',
+  'spawn stands on solid ground',
+  world.getBlock(Math.floor(world.terrain.spawn.x), Math.floor(world.terrain.spawn.y) - 1, Math.floor(world.terrain.spawn.z)) !==
+    Block.AIR,
+);
+check(
+  'spawn column is clear',
   world.getBlock(Math.floor(world.terrain.spawn.x), Math.floor(world.terrain.spawn.y), Math.floor(world.terrain.spawn.z)) ===
     Block.AIR,
 );

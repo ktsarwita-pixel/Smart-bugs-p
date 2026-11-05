@@ -28,8 +28,12 @@ export class HUD {
   private gasPill: HTMLElement;
   private gasValue: HTMLElement;
   private creditsChip: HTMLElement;
+  private creditsValue: HTMLElement;
   private depthChip: HTMLElement;
+  private depthValue: HTMLElement;
   private clockChip: HTMLElement;
+  /** Last value written to a DOM node — the HUD only touches what changed. */
+  private readonly domCache = new Map<string, string>();
   private compassStrip: HTMLElement;
   private hotbar: HTMLElement;
   private heldName: HTMLElement;
@@ -129,7 +133,9 @@ export class HUD {
     this.gasValue = this.root.querySelector('[data-gas]') as HTMLElement;
     this.gasPill = this.root.querySelector('[data-gasrow]') as HTMLElement;
     this.creditsChip = this.root.querySelector('[data-credits]') as HTMLElement;
+    this.creditsValue = this.creditsChip.querySelector('b') as HTMLElement;
     this.depthChip = this.root.querySelector('[data-depth]') as HTMLElement;
+    this.depthValue = this.depthChip.querySelector('b') as HTMLElement;
     this.clockChip = this.root.querySelector('[data-clock]') as HTMLElement;
     this.compassStrip = this.root.querySelector('.compass-strip') as HTMLElement;
     this.hotbar = this.root.querySelector('[data-hotbar]') as HTMLElement;
@@ -205,34 +211,56 @@ export class HUD {
     });
   }
 
+  /** Write text only when it actually changed. */
+  private setText(el: HTMLElement, key: string, value: string): void {
+    if (this.domCache.get(key) === value) return;
+    this.domCache.set(key, value);
+    el.textContent = value;
+  }
+
+  /** Write a style only when it actually changed. */
+  private setStyle(
+    el: HTMLElement,
+    key: string,
+    prop: 'width' | 'opacity' | 'transform' | 'display',
+    value: string,
+  ): void {
+    const cacheKey = `${key}.${prop}`;
+    if (this.domCache.get(cacheKey) === value) return;
+    this.domCache.set(cacheKey, value);
+    el.style[prop] = value;
+  }
+
   update(dt: number, fps: number): void {
     const game = this.game;
     const player = game.player;
 
     // --- vitals ---
     const hpRatio = Math.max(0, player.health / player.maxHealth);
-    this.healthBar.style.width = `${hpRatio * 100}%`;
-    this.healthValue.textContent = `${Math.ceil(player.health)}`;
-    this.staminaBar.style.width = `${(player.stamina / PLAYER.maxStamina) * 100}%`;
+    this.setStyle(this.healthBar, 'hp', 'width', `${hpRatio * 100}%`);
+    this.setText(this.healthValue, 'hpv', `${Math.ceil(player.health)}`);
+    this.setStyle(this.staminaBar, 'stamina', 'width', `${(player.stamina / PLAYER.maxStamina) * 100}%`);
     const airRatio = 1 - player.gas / 100;
-    this.gasBar.style.width = `${airRatio * 100}%`;
-    this.gasValue.textContent = `${Math.round(airRatio * 100)}%`;
-    this.gasPill.style.opacity = player.gas > 1 ? '1' : '0.45';
+    this.setStyle(this.gasBar, 'air', 'width', `${airRatio * 100}%`);
+    this.setText(this.gasValue, 'airv', `${Math.round(airRatio * 100)}%`);
+    this.setStyle(this.gasPill, 'gasPill', 'opacity', player.gas > 1 ? '1' : '0.45');
 
     // --- chips ---
-    this.creditsChip.innerHTML = `<b>${game.credits.toLocaleString()}</b> credits`;
+    // innerHTML re-parses markup; these run every frame, so only the number
+    // inside the chip is touched.
+    this.setText(this.creditsValue, 'credits', game.credits.toLocaleString());
     const depth = Math.max(0, Math.round(game.surfaceHeight - player.pos.y));
-    this.depthChip.innerHTML = `Depth <b>${depth}</b> m`;
-    this.clockChip.textContent = game.clockString();
+    this.setText(this.depthValue, 'depth', `${depth}`);
+    this.setText(this.clockChip, 'clock', game.clockString());
 
     // --- compass ---
     const yawDeg = ((-player.yaw * 180) / Math.PI + 360) % 360;
-    this.compassStrip.style.transform = `translateX(${170 - yawDeg * 1.6}px)`;
+    this.setStyle(this.compassStrip, 'compass', 'transform', `translateX(${170 - yawDeg * 1.6}px)`);
 
     // --- crosshair + mining ring ---
     const mining = player.mineProgress > 0.001;
     this.crosshair.classList.toggle('mining', mining);
-    this.mineProgress.style.display = mining ? 'block' : 'none';
+    this.setStyle(this.mineProgress, 'mineRing', 'display', mining ? 'block' : 'none');
     if (mining) {
       this.mineProgressCircle.style.strokeDashoffset = `${150 * (1 - Math.min(1, player.mineProgress))}`;
     }
@@ -243,7 +271,10 @@ export class HUD {
     for (let i = 0; i < 9; i++) {
       const slot = game.inventory.slots[i];
       const el = this.slots[i];
-      el.classList.toggle('active', i === game.inventory.selected);
+      if (el.dataset.active !== String(i === game.inventory.selected)) {
+        el.dataset.active = String(i === game.inventory.selected);
+        el.classList.toggle('active', i === game.inventory.selected);
+      }
       const key = slot ? `${slot.id}:${slot.count}:${slot.durability ?? ''}` : '';
       if (el.dataset.key !== key) {
         el.dataset.key = key;
@@ -284,30 +315,30 @@ export class HUD {
 
     // --- robot panel ---
     const robot = game.robot;
-    this.robotState.textContent = robotStateLabel(robot.state);
-    this.robotBattery.style.width = `${(robot.battery / robot.batteryMax) * 100}%`;
-    this.robotCargo.textContent = `${robot.cargoCount} / ${robot.cargoLimit}`;
-    this.robotPanel.style.opacity = robot.state === 'OFFLINE' ? '0.55' : '1';
+    this.setText(this.robotState, 'robotState', robotStateLabel(robot.state));
+    this.setStyle(this.robotBattery, 'robotBattery', 'width', `${(robot.battery / robot.batteryMax) * 100}%`);
+    this.setText(this.robotCargo, 'robotCargo', `${robot.cargoCount} / ${robot.cargoLimit}`);
+    this.setStyle(this.robotPanel, 'robotPanel', 'opacity', robot.state === 'OFFLINE' ? '0.55' : '1');
 
     // --- contract ---
     const quest = game.activeQuest;
     if (quest) {
       const progress = Math.min(quest.goal, game.stats.get(quest.stat));
-      this.contractName.textContent = quest.name;
-      this.contractGoal.textContent = quest.desc;
-      this.contractProgress.textContent = `${progress}/${quest.goal}`;
-      this.contractProgressBar.style.width = `${(progress / quest.goal) * 100}%`;
-      this.contractPanel.style.display = 'block';
+      this.setText(this.contractName, 'questName', quest.name);
+      this.setText(this.contractGoal, 'questGoal', quest.desc);
+      this.setText(this.contractProgress, 'questProgress', `${progress}/${quest.goal}`);
+      this.setStyle(this.contractProgressBar, 'questBar', 'width', `${(progress / quest.goal) * 100}%`);
+      this.setStyle(this.contractPanel, 'questPanel', 'display', 'block');
     } else {
-      this.contractPanel.style.display = 'none';
+      this.setStyle(this.contractPanel, 'questPanel', 'display', 'none');
     }
 
     // --- vignettes ---
-    this.damageVignette.style.opacity = `${Math.max(0, 1 - hpRatio) * 0.9}`;
-    this.gasVignette.style.opacity = `${Math.max(0, (player.gas - 35) / 65) * 0.9}`;
+    this.setStyle(this.damageVignette, 'dmgVig', 'opacity', `${Math.max(0, 1 - hpRatio) * 0.9}`);
+    this.setStyle(this.gasVignette, 'gasVig', 'opacity', `${Math.max(0, (player.gas - 35) / 65) * 0.9}`);
 
     // --- fps ---
-    this.fpsBadge.textContent = `${Math.round(fps)} fps`;
+    this.setText(this.fpsBadge, 'fps', `${Math.round(fps)} fps`);
     void dt;
   }
 }
