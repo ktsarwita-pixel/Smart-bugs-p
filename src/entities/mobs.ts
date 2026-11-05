@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MOB, WORLD_X, WORLD_Y, WORLD_Z } from '../core/constants';
 import { Block } from '../world/blocks';
-import { moveEntity } from './physics';
+import { createStepState, moveEntity, type StepState } from './physics';
 import type { Game } from '../game/game';
 
 export type MobKind = 'crawler' | 'magmite';
@@ -18,6 +18,8 @@ export interface Mob {
   kind: MobKind;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
+  /** Smooth step-up state: the creature glides up a ledge. */
+  stepState: StepState;
   yaw: number;
   health: number;
   maxHealth: number;
@@ -141,7 +143,7 @@ export class MobManager {
 
       // Physics.
       mob.vel.y -= 26 * dt;
-      const result = moveEntity(this.game.world, mob.pos, mob.vel, 0.32, 0.9, dt, 1.0);
+      const result = moveEntity(this.game.world, mob.pos, mob.vel, 0.32, 0.9, dt, 1.0, mob.stepState);
       if (result.grounded) mob.vel.y = 0;
       if (mob.pos.y < 1) {
         mob.pos.y = 20;
@@ -226,6 +228,7 @@ export class MobManager {
             kind,
             pos: new THREE.Vector3(x + 0.5, y, z + 0.5),
             vel: new THREE.Vector3(),
+            stepState: createStepState(),
             yaw: 0,
             health: MOB.health,
             maxHealth: MOB.health,

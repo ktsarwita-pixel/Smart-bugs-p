@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PLAYER, WORLD_X, WORLD_Z } from '../core/constants';
 import { Block, blockDef } from '../world/blocks';
-import { moveEntity, unstick } from './physics';
+import { createStepState, moveEntity, unstick, type StepState } from './physics';
 import {
   animateSwing,
   animateWalk,
@@ -22,6 +22,8 @@ export interface MineTarget {
 export class Player {
   readonly pos = new THREE.Vector3();
   readonly vel = new THREE.Vector3();
+  /** Smooth step-up state: the miner glides up a ledge instead of hopping. */
+  readonly stepState: StepState = createStepState();
   yaw = 0;
   pitch = 0;
 
@@ -223,7 +225,7 @@ export class Player {
     if (input.state.jump) {
       if (this.inWater) {
         this.vel.y = Math.min(this.vel.y + 22 * dt, 3.4);
-      } else if (this.onGround && this.stamina > 5) {
+      } else if ((this.onGround || this.stepState.climbing) && this.stamina > 5) {
         this.vel.y = PLAYER.jumpVelocity;
         this.stamina -= 6;
         this.onGround = false;
@@ -242,7 +244,10 @@ export class Player {
     }
 
     // ---- gravity ----
-    if (this.inWater) {
+    if (this.stepState.climbing) {
+      // Gliding up a ledge: gravity would fight the climb, so it is skipped.
+      this.vel.y = 0;
+    } else if (this.inWater) {
       this.vel.y -= 6 * dt;
       this.vel.y = Math.max(this.vel.y, -3.2);
     } else {
@@ -261,6 +266,7 @@ export class Player {
       height,
       dt,
       this.inWater ? 0 : PLAYER.stepHeight,
+      this.stepState,
     );
     const wasGrounded = this.onGround;
     this.onGround = result.grounded;

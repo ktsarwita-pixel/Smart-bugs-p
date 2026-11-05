@@ -477,6 +477,115 @@ function pushCross(
 }
 
 /**
+ * A thin post for torches: two pixels wide and ten pixels tall, standing in
+ * the middle of the block.
+ *
+ * Torches used to be drawn as a cross of two diagonal quads, which turned
+ * the vertical torch sprite into a leaning stick. The post shows the middle
+ * two columns of the tile on its sides and the flame on its top.
+ */
+function pushPost(
+  b: Buffers,
+  bx: number,
+  by: number,
+  bz: number,
+  tile: number,
+  baseBrightness: number,
+): void {
+  const [u0, v0, du, dv] = tileUV(tile);
+  const w = 2 / 16;
+  const h = 10 / 16;
+  const x0 = bx + 7 / 16;
+  const x1 = x0 + w;
+  const z0 = bz + 7 / 16;
+  const z1 = z0 + w;
+  const y0 = by;
+  const y1 = by + h;
+
+  // The post shows the middle two columns of the tile.
+  const uu0 = u0 + du * (7 / 16);
+  const uu1 = uu0 + du * (2 / 16);
+  const vv0 = v0;
+  const vv1 = v0 + dv;
+  // The top of the post shows the flame.
+  const flameV0 = v0 + dv * 0.5;
+  const flameV1 = v0 + dv * 0.875;
+
+  const lx = bx - chunkCache.ox;
+  const lz = bz - chunkCache.oz;
+  let sky = 0;
+  let block = 0;
+  if (by >= 0 && by < CACHE_Y && lx >= 0 && lx < CACHE_X && lz >= 0 && lz < CACHE_Z) {
+    const i = cacheIndex(lx, by, lz);
+    sky = cacheSky[i];
+    block = cacheBlockLight[i];
+  }
+  const l = [block / 15, sky / 15, baseBrightness * 0.95];
+
+  const faces: Array<{
+    n: [number, number, number];
+    pts: Array<[number, number, number, number, number]>;
+  }> = [
+    {
+      n: [0, 0, -1],
+      pts: [
+        [x0, y0, z0, uu0, vv0],
+        [x0, y1, z0, uu0, vv1],
+        [x1, y1, z0, uu1, vv1],
+        [x1, y0, z0, uu1, vv0],
+      ],
+    },
+    {
+      n: [0, 0, 1],
+      pts: [
+        [x1, y0, z1, uu0, vv0],
+        [x1, y1, z1, uu0, vv1],
+        [x0, y1, z1, uu1, vv1],
+        [x0, y0, z1, uu1, vv0],
+      ],
+    },
+    {
+      n: [-1, 0, 0],
+      pts: [
+        [x0, y0, z1, uu0, vv0],
+        [x0, y1, z1, uu0, vv1],
+        [x0, y1, z0, uu1, vv1],
+        [x0, y0, z0, uu1, vv0],
+      ],
+    },
+    {
+      n: [1, 0, 0],
+      pts: [
+        [x1, y0, z0, uu0, vv0],
+        [x1, y1, z0, uu0, vv1],
+        [x1, y1, z1, uu1, vv1],
+        [x1, y0, z1, uu1, vv0],
+      ],
+    },
+    {
+      n: [0, 1, 0],
+      pts: [
+        [x0, y1, z1, uu0, flameV1],
+        [x1, y1, z1, uu1, flameV1],
+        [x1, y1, z0, uu1, flameV0],
+        [x0, y1, z0, uu0, flameV0],
+      ],
+    },
+  ];
+
+  for (const f of faces) {
+    const base = b.position.length / 3;
+    for (const [px, py, pz, u, v] of f.pts) {
+      b.position.push3(px, py, pz);
+      b.normal.push3(f.n[0], f.n[1], f.n[2]);
+      b.uv.push2(u, v);
+      b.light.push3(l[0], l[1], l[2]);
+    }
+    b.index.push6(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+}
+
+/**
  * Build the geometry for one chunk column.
  * Returns three geometries: opaque, cutout (leaves/glass/plants) and liquid.
  */
@@ -500,10 +609,12 @@ export function buildChunkMesh(world: World, cx: number, cz: number): ChunkMeshD
         if (id === Block.AIR) continue;
         const def = blockDef(id);
 
-        if (def.render === 'cross' || def.render === 'torch') {
-          const scale = def.render === 'torch' ? 0.34 : 1;
-          const height = def.render === 'torch' ? 0.95 : 1;
-          pushCross(cutout, wx, wy, wz, def.side, scale, height, 1);
+        if (def.render === 'torch') {
+          pushPost(cutout, wx, wy, wz, def.side, 1);
+          continue;
+        }
+        if (def.render === 'cross') {
+          pushCross(cutout, wx, wy, wz, def.side, 1, 1, 1);
           continue;
         }
 
