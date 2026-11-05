@@ -16,7 +16,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  administration: write
   contents: read
 
 concurrency:
