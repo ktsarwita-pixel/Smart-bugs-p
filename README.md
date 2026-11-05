@@ -97,6 +97,31 @@ npm run verify     # tests + build
 
 ---
 
+## 🤖 Agent workflow (Clade + Sense)
+
+This repo is set up for the **Clade** delivery workflow and the **Sense** MCP
+codebase-context server:
+
+| File | What it is |
+| --- | --- |
+| `AGENTS.md` | Project conventions + the Sense routing guidance (tool substitution table). |
+| `CLADE_WORKFLOW.md` | The run contract: verify commands, retry/backoff, oracle posture, merge policy. |
+| `.mcp.json` | The Sense MCP server entry (`sense mcp`) for any MCP client. |
+| `.claude/settings.json` | Sense lifecycle hooks (`pre-tool-use`, `pre-compact`, `session-start`, …). |
+| `.claude/skills/` | Sense skills: `sense-explore`, `sense-impact`, `sense-conventions`. |
+| `docs/codebase-map.md` | Cold-start map: namespaces, hub symbols, type map, import edges. |
+| `scripts/codebase-map.py` | Regenerates the map (and mirrors `sense scan` output). |
+| `scripts/extract-sense-setup.py` | Re-materialises the Sense setup files from the Sense source tree. |
+
+Enable it with:
+
+```bash
+curl -fsSL https://luuuc.github.io/sense/install.sh | sh
+cd . && sense scan && sense setup
+```
+
+---
+
 ## 🏗 Architecture
 
 ```
