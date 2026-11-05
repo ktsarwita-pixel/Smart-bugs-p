@@ -1117,8 +1117,16 @@ export class Game {
   private update(dt: number): void {
     this.input.update();
 
-    // Touch look: drag anywhere on the right half of the screen.
+    // Touch look: drag anywhere on the screen except the touch controls.
     this.handleTouchLook();
+
+    // Hide the touch controls while a menu is open so they do not sit on
+    // top of the buttons the miner is trying to tap.
+    const touchVisible = this.settings.touchControls && !this.paused && !this.screens.isOpen;
+    if (touchVisible !== this.touchVisible) {
+      this.touchVisible = touchVisible;
+      this.touch?.setEnabled(touchVisible);
+    }
 
     this.player.update(dt, this.input);
     this.robot.update(dt);
@@ -1202,20 +1210,36 @@ export class Game {
     if (!this.settings.touchControls) return;
     const canvas = this.canvas;
     const onDown = (e: PointerEvent): void => {
-      if (e.pointerType !== 'touch') return;
-      if (e.clientX < window.innerWidth * 0.35) return;
+      if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      // A gesture that starts on a touch control belongs to that control.
+      // Everything else on the screen looks around, so the miner can swipe
+      // from wherever it is comfortable to hold the phone.
+      const target = e.target as HTMLElement | null;
+      if (target && typeof target.closest === 'function' && target.closest('.touch-layer')) return;
       this.touchLookPointer = e.pointerId;
       this.touchLookLast = { x: e.clientX, y: e.clientY };
+      // Keep receiving the moves even when the finger slides over a button.
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        /* capture is a nicety, not a requirement */
+      }
     };
     const onMove = (e: PointerEvent): void => {
       if (e.pointerId !== this.touchLookPointer) return;
       const dx = e.clientX - this.touchLookLast.x;
       const dy = e.clientY - this.touchLookLast.y;
       this.touchLookLast = { x: e.clientX, y: e.clientY };
-      this.input.addTouchLook(dx * 1.35, dy * 1.35);
+      this.input.addTouchLook(dx * 1.5, dy * 1.5);
     };
     const onUp = (e: PointerEvent): void => {
-      if (e.pointerId === this.touchLookPointer) this.touchLookPointer = -1;
+      if (e.pointerId !== this.touchLookPointer) return;
+      this.touchLookPointer = -1;
+      try {
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
     };
     if (!this.touchLookBound) {
       this.touchLookBound = true;
@@ -1227,4 +1251,5 @@ export class Game {
   }
 
   private touchLookBound = false;
+  private touchVisible = false;
 }

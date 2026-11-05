@@ -3,6 +3,8 @@
  * and make sure every panel renders without throwing.
  * Run with: npm run test:ui
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { JSDOM } from 'jsdom';
 
 let failures = 0;
@@ -303,6 +305,111 @@ try {
   touchError = error;
 }
 check('touch controls toggle without throwing', touchError === null, String(touchError));
+
+/* ------------------------------------------------------------------ */
+section('Mobile look and touch routing');
+/* ------------------------------------------------------------------ */
+// The overlays cover the whole screen. If they swallow touches the miner can
+// never drag to look around on a phone.
+const css = readFileSync(resolve(process.cwd(), 'src/styles/main.css'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '');
+function pointerEventsFor(selector: string): string {
+  // Find every rule that mentions the selector and keep the most specific one.
+  let best = '';
+  let bestScore = -1;
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = ruleRe.exec(css))) {
+    const selectors = match[1].split(',').map((s) => s.trim());
+    if (!selectors.includes(selector)) continue;
+    const body = match[2];
+    const pe = /pointer-events:\s*(none|auto)/.exec(body);
+    if (!pe) continue;
+    const score =
+      (selector.includes('#') ? 100 : 0) +
+      (selector.includes('>') ? 10 : 0) +
+      (selector.includes('.') ? 5 : 0);
+    if (score >= bestScore) {
+      bestScore = score;
+      best = pe[1];
+    }
+  }
+  return best;
+}
+check(
+  'the HUD does not swallow touches meant for the canvas',
+  pointerEventsFor('#ui-root > .hud') === 'none',
+  `got "${pointerEventsFor('#ui-root > .hud')}"`,
+);
+check(
+  'the touch layer does not swallow touches meant for the canvas',
+  pointerEventsFor('#ui-root > .touch-layer') === 'none',
+  `got "${pointerEventsFor('#ui-root > .touch-layer')}"`,
+);
+check(
+  'the hotbar slots stay tappable',
+  pointerEventsFor('#ui-root > .hud .hotbar .slot') === 'auto',
+  `got "${pointerEventsFor('#ui-root > .hud .hotbar .slot')}"`,
+);
+
+// The look gesture has to work from anywhere except the touch controls.
+const lookCalls: Array<{ x: number; y: number }> = [];
+const lookInput = {
+  ...inputStub,
+  addTouchLook: (dx: number, dy: number) => lookCalls.push({ x: dx, y: dy }),
+};
+const gameForLook = { togglePause: () => undefined, toggleViewMode: () => undefined };
+const { Game: GameClass } = await import('../src/game/game');
+const canvasEl = document.createElement('canvas');
+canvasEl.id = 'game-canvas';
+document.body.appendChild(canvasEl);
+const gameInstance = new GameClass(document.body);
+gameInstance.settings.touchControls = true;
+(gameInstance as unknown as { screens: { isOpen: boolean } }).screens = { isOpen: false };
+// The look gesture is wired up from the game loop; bind it directly here.
+(gameInstance as unknown as { handleTouchLook(): void }).handleTouchLook();
+// Watch the game's own input: that is what the look gesture talks to.
+const realInput = gameInstance.input;
+realInput.addTouchLook = (dx: number, dy: number) => lookCalls.push({ x: dx, y: dy });
+const touchForLook = new TouchControls(gameForLook as never, lookInput as never);
+uiRoot.appendChild(touchForLook.root);
+const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+check('the game has a canvas to drag', !!canvas);
+
+function pointerEvent(type: string, x: number, y: number, target: EventTarget): Event {
+  const ev = new window.Event(type, { bubbles: true, cancelable: true }) as Event & {
+    pointerId: number;
+    pointerType: string;
+    clientX: number;
+    clientY: number;
+  };
+  ev.pointerId = 7;
+  ev.pointerType = 'touch';
+  ev.clientX = x;
+  ev.clientY = y;
+  Object.defineProperty(ev, 'target', { value: target, configurable: true });
+  return ev;
+}
+
+// A swipe on the canvas looks around.
+canvas.dispatchEvent(pointerEvent('pointerdown', 300, 400, canvas));
+canvas.dispatchEvent(pointerEvent('pointermove', 360, 430, canvas));
+check(
+  'dragging on the canvas looks around',
+  lookCalls.length > 0 && lookCalls[0]!.x > 0,
+  `calls=${JSON.stringify(lookCalls)}`,
+);
+
+// A drag that starts on a touch control belongs to that control.
+lookCalls.length = 0;
+const joystick = touchForLook.root.querySelector('.joystick') as HTMLElement;
+joystick.dispatchEvent(pointerEvent('pointerdown', 60, 700, joystick));
+joystick.dispatchEvent(pointerEvent('pointermove', 90, 700, joystick));
+check(
+  'dragging the joystick does not spin the camera',
+  lookCalls.length === 0,
+  `calls=${JSON.stringify(lookCalls)}`,
+);
 
 /* ------------------------------------------------------------------ */
 section('Item metadata');

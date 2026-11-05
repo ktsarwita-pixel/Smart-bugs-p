@@ -112,6 +112,74 @@ check(
 );
 
 /* ------------------------------------------------------------------ */
+console.log('\nWalking into a wall');
+/* ------------------------------------------------------------------ */
+// Walking into a wall must not throw the miner back: the old snap-back used
+// the position from before the blocked move, which sent them a whole block
+// backwards every time they touched a wall.
+const wallX = 40;
+const wallZ = 38;
+for (let y = 1; y <= 2; y++) {
+  for (let z = wallZ - 2; z <= wallZ; z++) {
+    world.setBlock(wallX, groundY + y, z, Block.STONE);
+  }
+}
+player.pos.set(wallX + 0.5, groundY + 1, 40.5);
+player.vel.set(0, 0, 0);
+player.yaw = 0;
+player.pitch = 0;
+player.dead = false;
+player.health = player.maxHealth;
+
+const state = game.input.state as unknown as { moveForward: number };
+let reversals = 0;
+let lastZ = player.pos.z;
+let lastDir = 0;
+for (let i = 0; i < 90; i++) {
+  state.moveForward = 1;
+  player.update(0.016, game.input);
+  const dir = Math.sign(player.pos.z - lastZ);
+  if (dir !== 0) {
+    if (lastDir !== 0 && dir !== lastDir) reversals++;
+    lastDir = dir;
+  }
+  lastZ = player.pos.z;
+}
+check(
+  'walking into a wall does not throw the miner back',
+  reversals === 0,
+  `the miner reversed direction ${reversals} times`,
+);
+// The wall occupies z = 38..39, so the miner rests at 39 + half a body.
+const restingZ = wallZ + 1 + PLAYER.width / 2;
+check(
+  'the miner stops against the wall',
+  Math.abs(player.pos.z - restingZ) < 0.05,
+  `z=${player.pos.z.toFixed(3)}, expected ${restingZ.toFixed(3)}`,
+);
+
+// A single block step must be climbed, not bounced off.
+for (let y = 1; y <= 2; y++) {
+  for (let z = wallZ - 2; z <= wallZ; z++) {
+    world.setBlock(wallX, groundY + y, z, Block.AIR);
+  }
+}
+world.setBlock(wallX, groundY + 1, wallZ - 2, Block.STONE);
+player.pos.set(wallX + 0.5, groundY + 1, 40.5);
+player.vel.set(0, 0, 0);
+player.yaw = 0;
+player.dead = false;
+for (let i = 0; i < 120; i++) {
+  state.moveForward = 1;
+  player.update(0.016, game.input);
+}
+check(
+  'the miner climbs a one block step and keeps walking',
+  player.pos.z < wallZ - 2.5 && player.pos.y > groundY - 0.5,
+  `pos=(${player.pos.x.toFixed(2)}, ${player.pos.y.toFixed(2)}, ${player.pos.z.toFixed(2)})`,
+);
+
+/* ------------------------------------------------------------------ */
 console.log('\nVoid safety');
 /* ------------------------------------------------------------------ */
 check(
