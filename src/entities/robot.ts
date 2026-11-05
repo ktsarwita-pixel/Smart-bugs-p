@@ -5,6 +5,7 @@ import { itemDef } from '../game/items';
 import { moveEntity, unstick } from './physics';
 import { animateRobot, applyLight, createRobotModel, type CharacterParts } from './models';
 import type { Game } from '../game/game';
+import type { World } from '../world/world';
 
 export type RobotState =
   | 'FOLLOW'
@@ -38,6 +39,12 @@ export class Robot {
   /** Set while the robot is drilling a specific block. */
   private mineTarget: { x: number; y: number; z: number; block: number } | null = null;
   private mineTimer = 0;
+  /** Closest the robot has got to its current target (blocks). */
+  private mineBestDistance = Infinity;
+  /** Seconds spent without making progress towards the target. */
+  private mineStuckTimer = 0;
+  /** Veins BOLT-7 gave up on, with the seconds left on the ban. */
+  private readonly mineBlacklist = new Map<string, number>();
   private stateTimer = 0;
   private scanTimer = 0;
   private oreScanTimer = 0;
@@ -74,6 +81,11 @@ export class Robot {
     this.mineTarget = null;
     this.mineTimer = 0;
     this.stuckTimer = 0;
+  }
+
+  /** Change state through a helper so the union type stays intact. */
+  private setState(next: RobotState): void {
+    this.state = next;
   }
 
   /** Give the robot a battery cell. */
@@ -147,8 +159,17 @@ export class Robot {
 
     // ---------- battery ----------
     if (this.battery <= 0) {
-      this.state = 'OFFLINE';
-    } else if (this.state !== 'OFFLINE') {
+      // A flat battery used to strand BOLT-7 in OFFLINE forever. It now looks
+      // for a charge station and trickles a charge back otherwise.
+      if (this.state !== 'CHARGE') {
+        const charger = this.findCharger();
+        if (charger && charger.distanceTo(this.pos) < 24) this.setState('CHARGE');
+        else this.setState('OFFLINE');
+      }
+      this.stateTimer = 0;
+    } else if (this.state === 'OFFLINE') {
+      this.setState('FOLLOW');
+    } else {
       const drain =
         this.state === 'MINE'
           ? ROBOT.batteryDrainMining
@@ -174,9 +195,19 @@ export class Robot {
       if (this.state === 'CHARGE') this.stateTimer = 0;
     } else if (this.state === 'IDLE' || this.state === 'CHARGE') {
       this.battery = Math.min(this.batteryMax, this.battery + 1.1 * dt);
+    } else if (this.state === 'OFFLINE') {
+      // Flat and stranded: keep a trickle coming so the robot comes back.
+      this.battery = Math.min(this.batteryMax, this.battery + 2.5 * dt);
     }
 
     this.stateTimer = Math.max(0, this.stateTimer - dt);
+    if (this.mineBlacklist.size > 0) {
+      for (const [key, left] of this.mineBlacklist) {
+        const next = left - dt;
+        if (next <= 0) this.mineBlacklist.delete(key);
+        else this.mineBlacklist.set(key, next);
+      }
+    }
 
     switch (this.state) {
       case 'OFFLINE':
@@ -226,8 +257,8 @@ export class Robot {
       if (this.stuckTimer > 0.6) {
         this.wanderAngle += Math.PI * (0.6 + Math.random() * 0.8);
         this.stuckTimer = 0;
-        this.mineTarget = null;
-        if (this.state === 'MINE') this.state = 'FOLLOW';
+        this.abandonTarget();
+        if (this.state === 'MINE') this.setState('FOLLOW');
       }
     } else {
       this.stuckTimer = 0;
@@ -311,6 +342,13 @@ export class Robot {
       this.vel.z *= 0.7;
     }
 
+    // A flat battery used to end the shift. BOLT-7 now heads for a charger.
+    if (this.battery < this.batteryMax * ROBOT.lowBatteryFraction) {
+      this.setState('CHARGE');
+      this.stateTimer = 0;
+      return;
+    }
+
     // Automatically look for work, but only scan for ore every few frames.
     this.oreScanTimer -= dt;
     if (this.oreScanTimer <= 0) {
@@ -341,13 +379,36 @@ export class Robot {
         this.vel.x *= 0.5;
         this.vel.z *= 0.5;
       }
-      if (this.battery >= this.batteryMax - 0.5) this.state = 'FOLLOW';
-    } else {
-      this.state = 'FOLLOW';
+      if (this.battery >= this.batteryMax - 0.5) this.setState('FOLLOW');
+      return;
     }
+
+    // No charge pad in reach: head back to the company base, there is a pad
+    // on the hut floor.
+    const spawn = this.game.world.terrain.spawn;
+    const home = new THREE.Vector3(spawn.x, spawn.y, spawn.z);
+    const d = this.pos.distanceTo(home);
+    if (d > 2.5) this.steerTo(home, dt, ROBOT.speed);
+    else {
+      this.vel.x *= 0.5;
+      this.vel.z *= 0.5;
+    }
+    if (this.battery >= this.batteryMax - 0.5) this.setState('FOLLOW');
   }
 
+  /** Cached charge pad — the scan is far too expensive to run every frame. */
+  private chargerPos: THREE.Vector3 | null = null;
+  private chargerScanTimer = 0;
+
   private findCharger(): THREE.Vector3 | null {
+    // The cached pad is good enough once it has been found.
+    if (this.chargerPos) {
+      const d = this.chargerPos.distanceTo(this.pos);
+      if (d < 48) return this.chargerPos;
+    }
+    this.chargerScanTimer -= 1;
+    if (this.chargerScanTimer > 0) return this.chargerPos;
+
     const world = this.game.world;
     const r = 16;
     const px = Math.floor(this.pos.x);
@@ -356,13 +417,16 @@ export class Robot {
     for (let dy = -r; dy <= r; dy++) {
       for (let dz = -r; dz <= r; dz++) {
         for (let dx = -r; dx <= r; dx++) {
-          if (Math.hypot(dx, dy, dz) > r) continue;
+          if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > r) continue;
           if (world.getBlock(px + dx, py + dy, pz + dz) === Block.CHARGER) {
-            return new THREE.Vector3(px + dx + 0.5, py + dy + 1, pz + dz + 0.5);
+            this.chargerPos = new THREE.Vector3(px + dx + 0.5, py + dy + 1, pz + dz + 0.5);
+            this.chargerScanTimer = 120;
+            return this.chargerPos;
           }
         }
       }
     }
+    this.chargerScanTimer = 60;
     return null;
   }
 
@@ -374,8 +438,7 @@ export class Robot {
     const py = Math.floor(this.pos.y);
     const pz = Math.floor(this.pos.z);
     const r = Math.ceil(radius);
-    let best: { x: number; y: number; z: number; block: number } | null = null;
-    let bestDist = Infinity;
+    const candidates: Array<{ x: number; y: number; z: number; block: number; d: number }> = [];
     for (let dy = -r; dy <= r; dy++) {
       for (let dz = -r; dz <= r; dz++) {
         for (let dx = -r; dx <= r; dx++) {
@@ -383,19 +446,62 @@ export class Robot {
           if (d > radius) continue;
           const b = world.getBlock(px + dx, py + dy, pz + dz);
           if (!isValuable(b)) continue;
-          if (d < bestDist) {
-            bestDist = d;
-            best = { x: px + dx, y: py + dy, z: pz + dz, block: b };
-          }
+          // Ore buried inside solid rock can never be reached — only pick
+          // veins that are exposed to open air.
+          if (!this.isExposed(world, px + dx, py + dy, pz + dz)) continue;
+          // Do not keep picking the vein that was just proved unreachable.
+          const ban = this.mineBlacklist.get(`${px + dx},${py + dy},${pz + dz}`);
+          if (ban !== undefined && ban > 0) continue;
+          candidates.push({ x: px + dx, y: py + dy, z: pz + dz, block: b, d });
         }
       }
     }
-    if (best) {
-      this.mineTarget = best;
-      this.mineTimer = 0;
-      return true;
+    if (candidates.length === 0) return false;
+    candidates.sort((a, b) => a.d - b.d);
+
+    // Prefer the closest vein the robot can actually walk up to: a vein
+    // behind a wall would keep the drill busy forever.
+    const eye = new THREE.Vector3(this.pos.x, this.pos.y + 0.9, this.pos.z);
+    for (const c of candidates.slice(0, 8)) {
+      const to = new THREE.Vector3(c.x + 0.5, c.y + 0.5, c.z + 0.5);
+      const dir = to.clone().sub(eye);
+      const len = dir.length();
+      if (len < 0.2) continue;
+      dir.normalize();
+      const hit = world.raycast(eye, dir, len);
+      if (!hit || (hit.x === c.x && hit.y === c.y && hit.z === c.z)) {
+        this.mineTarget = { x: c.x, y: c.y, z: c.z, block: c.block };
+        this.mineTimer = 0;
+        this.mineBestDistance = Infinity;
+        this.mineStuckTimer = 0;
+        return true;
+      }
     }
     return false;
+  }
+
+  /** Give up on the current vein and remember not to try it again. */
+  private abandonTarget(): void {
+    if (this.mineTarget) {
+      const key = `${this.mineTarget.x},${this.mineTarget.y},${this.mineTarget.z}`;
+      this.mineBlacklist.set(key, ROBOT.mineGiveUpSeconds * 5);
+    }
+    this.mineTarget = null;
+    this.mineStuckTimer = 0;
+    this.mineBestDistance = Infinity;
+    this.mineTimer = 0;
+  }
+
+  /** True when at least one neighbour of the block is not solid. */
+  private isExposed(world: World, x: number, y: number, z: number): boolean {
+    return (
+      !world.isSolidAt(x + 1, y, z) ||
+      !world.isSolidAt(x - 1, y, z) ||
+      !world.isSolidAt(x, y + 1, z) ||
+      !world.isSolidAt(x, y - 1, z) ||
+      !world.isSolidAt(x, y, z + 1) ||
+      !world.isSolidAt(x, y, z - 1)
+    );
   }
 
   private updateMining(dt: number): void {
@@ -420,6 +526,21 @@ export class Robot {
     if (dist > ROBOT.miningRange) {
       this.steerTo(target, dt, ROBOT.speed);
       this.mineTimer = 0;
+      // Give up on a vein the robot cannot reach, otherwise it pushes against
+      // the rock forever and the battery drains for nothing.
+      // Only real progress counts: small shuffles must not keep the timer
+      // alive forever.
+      if (dist < this.mineBestDistance - 0.4) {
+        this.mineBestDistance = dist;
+        this.mineStuckTimer = 0;
+      } else {
+        this.mineStuckTimer += dt;
+        if (this.mineStuckTimer > ROBOT.mineGiveUpSeconds) {
+          this.abandonTarget();
+          this.setState('FOLLOW');
+          return;
+        }
+      }
     } else {
       this.vel.x *= 0.5;
       this.vel.z *= 0.5;

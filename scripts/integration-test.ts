@@ -268,7 +268,7 @@ if (robotOre) {
 /* ------------------------------------------------------------------ */
 section('Spawn area');
 const spawn = world.terrain.spawn;
-const spawnFloor = Math.floor(spawn.y) + 1;
+const spawnFloor = Math.floor(spawn.y);
 check('spawn point is walkable', world.getBlock(Math.floor(spawn.x), spawnFloor, Math.floor(spawn.z)) === Block.AIR);
 let exits = 0;
 for (const [dx, dz] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {

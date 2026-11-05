@@ -290,8 +290,8 @@ export class Game {
       this.applySave(save);
     } else {
       const spawn = this.world.terrain.spawn;
-      this.player.spawnAt(spawn.x, spawn.y + 1, spawn.z);
-      this.robot.spawnAt(spawn.x + 1.5, spawn.y + 1, spawn.z);
+      this.player.spawnAt(spawn.x, spawn.y, spawn.z);
+      this.robot.spawnAt(spawn.x + 1.5, spawn.y, spawn.z);
       this.inventory.add('pickaxe_wood', 1);
       this.inventory.add('torch', 8);
       this.inventory.add('planks', 8);
@@ -351,6 +351,8 @@ export class Game {
     const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     if (isTouch && localStorage.getItem(SETTINGS_KEY) === null) {
       this.settings.touchControls = true;
+      // A phone cannot afford the full view distance.
+      this.settings.renderDistance = RENDER.mobileRenderDistance;
     }
   }
 
@@ -988,7 +990,7 @@ export class Game {
 
     // Rebuild dirty chunks within a small time budget so the world fills in
     // quickly without dropping frames.
-    const budgetEnd = performance.now() + 7;
+    const budgetEnd = performance.now() + RENDER.chunkBudgetMs;
     while (best && performance.now() < budgetEnd) {
       this.world.rebuildChunk(best.cx, best.cz);
       best = this.nextDirtyChunk(pcx, pcz, dist, best.cx, best.cz);
@@ -1071,7 +1073,10 @@ export class Game {
     const underground = THREE.MathUtils.clamp(depth / 12, 0, 1);
     const fogColor = horizon.clone().lerp(new THREE.Color(0x0a0b0f), underground * 0.92);
     const fogNear = 14 - underground * 8;
-    const fogFar = RENDER.fogFar * (1 - underground * 0.55);
+    // The fog has to end before the edge of the meshed area, otherwise the
+    // miner sees the world simply stop.
+    const visible = this.settings.renderDistance * 16 * 0.92;
+    const fogFar = Math.min(RENDER.fogFar, visible) * (1 - underground * 0.55);
     this.materials.setFog(fogColor, fogNear, fogFar);
     this.materials.setDay(0.12 + day * 0.88);
     this.materials.uniforms.uTime.value = this.elapsed;

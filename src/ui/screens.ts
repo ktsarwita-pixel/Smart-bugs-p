@@ -2,6 +2,7 @@ import { itemIcon } from '../render/textures';
 import { itemDef } from '../game/items';
 import { allRecipes, type Recipe } from '../game/recipes';
 import { UPGRADES } from '../game/upgrades';
+import { RENDER } from '../core/constants';
 import { QUESTS } from '../game/quests';
 import type { Game } from '../game/game';
 
@@ -411,7 +412,7 @@ export class Screens {
       </div>
       <div class="setting-row">
         <span>Render distance (chunks)</span>
-        <input type="range" min="3" max="12" step="1" value="${s.renderDistance}" data-setting="renderDistance">
+        <input type="range" min="3" max="${RENDER.maxRenderDistance}" step="1" value="${s.renderDistance}" data-setting="renderDistance">
       </div>
       <div class="setting-row">
         <span>Invert vertical look</span>

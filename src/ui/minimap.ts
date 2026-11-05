@@ -1,20 +1,48 @@
-import { Block } from '../world/blocks';
 import { WORLD_X, WORLD_Z } from '../core/constants';
 import type { Game } from '../game/game';
 
-const BIOME_COLORS: Record<number, string> = {
-  0: '#4f8c37',
-  1: '#c9b178',
-  2: '#6e675f',
+const BIOME_COLORS: Record<number, [number, number, number]> = {
+  0: [79, 140, 55],
+  1: [201, 177, 120],
+  2: [110, 103, 95],
 };
 
 const SIZE = 148;
 const SCALE = 1.9;
 
+/** Pre-computed shading ramp: shade bucket -> packed rgb string. */
+const SHADE_MIN = -26;
+const SHADE_MAX = 26;
+const SHADE_STEP = 2;
+const SHADE_BUCKETS = Math.floor((SHADE_MAX - SHADE_MIN) / SHADE_STEP) + 1;
+const WATER: [number, number, number] = [47, 95, 168];
+const SNOW: [number, number, number] = [154, 147, 138];
+
+function buildRamp(base: [number, number, number]): Uint8Array {
+  const ramp = new Uint8Array(SHADE_BUCKETS * 3);
+  for (let i = 0; i < SHADE_BUCKETS; i++) {
+    const amount = SHADE_MIN + i * SHADE_STEP;
+    ramp[i * 3] = Math.max(0, Math.min(255, base[0] + amount));
+    ramp[i * 3 + 1] = Math.max(0, Math.min(255, base[1] + amount));
+    ramp[i * 3 + 2] = Math.max(0, Math.min(255, base[2] + amount));
+  }
+  return ramp;
+}
+
 /** Top-down minimap of the terrain around the player. */
 export class Minimap {
   readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  /** Off-screen pixel buffer for the terrain layer. */
+  private readonly image: ImageData;
+  private readonly pixels: Uint8ClampedArray;
+  private readonly ramps = new Map<string, Uint8Array>();
+  /** Last drawn position, so an unchanged map is not redrawn. */
+  private lastX = Number.NaN;
+  private lastZ = Number.NaN;
+  private lastRobotX = Number.NaN;
+  private lastRobotZ = Number.NaN;
+  private lastRevealed = -1;
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -23,6 +51,17 @@ export class Minimap {
     this.canvas.className = 'mini-map';
     this.ctx = this.canvas.getContext('2d')!;
     this.ctx.imageSmoothingEnabled = false;
+    this.image = this.ctx.createImageData(SIZE, SIZE);
+    this.pixels = this.image.data;
+  }
+
+  private ramp(key: string, base: [number, number, number]): Uint8Array {
+    let ramp = this.ramps.get(key);
+    if (!ramp) {
+      ramp = buildRamp(base);
+      this.ramps.set(key, ramp);
+    }
+    return ramp;
   }
 
   render(game: Game): void {
@@ -31,36 +70,78 @@ export class Minimap {
     const player = game.player;
     const cx = player.pos.x;
     const cz = player.pos.z;
+
+    // Nothing has moved since the last frame: redrawing 22k pixels for an
+    // unchanged map is pure waste.
+    const robot = game.robot;
+    const moved =
+      Math.abs(cx - this.lastX) > 0.35 ||
+      Math.abs(cz - this.lastZ) > 0.35 ||
+      Math.abs(robot.pos.x - this.lastRobotX) > 0.35 ||
+      Math.abs(robot.pos.z - this.lastRobotZ) > 0.35 ||
+      robot.revealed.size !== this.lastRevealed;
+    if (!moved) return;
+    this.lastX = cx;
+    this.lastZ = cz;
+    this.lastRobotX = robot.pos.x;
+    this.lastRobotZ = robot.pos.z;
+    this.lastRevealed = robot.revealed.size;
     const half = SIZE / 2;
     const step = 1 / SCALE;
+    const heightMap = world.terrain.heightMap;
+    const biomeMap = world.terrain.biomeMap;
 
-    ctx.fillStyle = '#0b0908';
-    ctx.fillRect(0, 0, SIZE, SIZE);
-
+    // --- terrain layer, written straight into the pixel buffer ---
     const px0 = Math.floor(cx - half * step);
     const pz0 = Math.floor(cz - half * step);
+    const pixels = this.pixels;
     for (let py = 0; py < SIZE; py++) {
+      const wz = pz0 + Math.floor(py * step);
+      const rowBase = py * SIZE * 4;
       for (let px = 0; px < SIZE; px++) {
         const wx = px0 + Math.floor(px * step);
-        const wz = pz0 + Math.floor(py * step);
-        if (wx < 0 || wz < 0 || wx >= WORLD_X || wz >= WORLD_Z) continue;
-        const height = world.terrain.heightMap[wx + wz * WORLD_X];
-        const biome = world.terrain.biomeMap[wx + wz * WORLD_X];
-        let color = BIOME_COLORS[biome] ?? '#555';
-
-        // Water / snow shading by height.
-        if (height <= 31) color = '#2f5fa8';
-        else if (height > 52) color = '#9a938a';
+        const i = rowBase + px * 4;
+        if (wx < 0 || wz < 0 || wx >= WORLD_X || wz >= WORLD_Z) {
+          pixels[i] = 11;
+          pixels[i + 1] = 9;
+          pixels[i + 2] = 8;
+          pixels[i + 3] = 255;
+          continue;
+        }
+        const idx = wx + wz * WORLD_X;
+        const height = heightMap[idx];
+        const biome = biomeMap[idx];
+        let base: [number, number, number];
+        let rampKey: string;
+        if (height <= 31) {
+          base = WATER;
+          rampKey = 'water';
+        } else if (height > 52) {
+          base = SNOW;
+          rampKey = 'snow';
+        } else {
+          base = BIOME_COLORS[biome] ?? ([85, 85, 85] as [number, number, number]);
+          rampKey = `biome${biome}`;
+        }
 
         // Simple slope shading.
-        const h2 = world.terrain.heightMap[Math.min(WORLD_X - 1, wx + 1) + wz * WORLD_X];
-        const shade = Math.max(-26, Math.min(26, (h2 - height) * 2));
-        ctx.fillStyle = this.shade(color, shade);
-        ctx.fillRect(px, py, 1, 1);
+        const h2 = heightMap[Math.min(WORLD_X - 1, wx + 1) + wz * WORLD_X];
+        let shade = (h2 - height) * 2;
+        if (shade < SHADE_MIN) shade = SHADE_MIN;
+        else if (shade > SHADE_MAX) shade = SHADE_MAX;
+        const bucket = Math.round((shade - SHADE_MIN) / SHADE_STEP);
+        const ramp = this.ramp(rampKey, base);
+        const o = bucket * 3;
+        pixels[i] = ramp[o];
+        pixels[i + 1] = ramp[o + 1];
+        pixels[i + 2] = ramp[o + 2];
+        pixels[i + 3] = 255;
       }
     }
+    ctx.putImageData(this.image, 0, 0);
 
-    // Revealed ore from the robot scanner.
+    // --- overlays ---
+    ctx.fillStyle = '#7fd1a8';
     for (const pos of game.robot.revealed.values()) {
       const px = (pos.x - cx) * SCALE + half;
       const py = (pos.z - cz) * SCALE + half;
@@ -102,14 +183,4 @@ export class Minimap {
     ctx.strokeStyle = 'rgba(0,0,0,0.85)';
     ctx.strokeRect(0.5, 0.5, SIZE - 1, SIZE - 1);
   }
-
-  private shade(hex: string, amount: number): string {
-    const n = parseInt(hex.slice(1), 16);
-    const r = Math.max(0, Math.min(255, ((n >> 16) & 255) + amount));
-    const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + amount));
-    const b = Math.max(0, Math.min(255, (n & 255) + amount));
-    return `rgb(${r},${g},${b})`;
-  }
 }
-
-export { Block };

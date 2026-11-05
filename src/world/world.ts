@@ -111,6 +111,11 @@ export class World {
     return Math.max(this.blockLight[i], this.skyLight[i]);
   }
 
+  /** Raw index into the block arrays. */
+  indexOf(x: number, y: number, z: number): number {
+    return (y * WORLD_Z + z) * WORLD_X + x;
+  }
+
   skyLightAt(x: number, y: number, z: number): number {
     if (x < 0 || z < 0 || y < 0 || x >= WORLD_X || z >= WORLD_Z || y >= WORLD_Y) return 0;
     return this.skyLight[index(x, y, z)];

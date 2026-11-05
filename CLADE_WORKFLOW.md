@@ -22,6 +22,7 @@ verify_commands:
   - npm run test:unit
   - npm run test:ui
   - npm run test:e2e
+  - npm run test:physics
   - npm run build
 # required = oracle gate; advisory = review without a hard gate; disabled = no oracle/review.
 oracle_posture: required
@@ -41,6 +42,7 @@ blob SHA of the policy it used.
 | `npm run test:unit` | Headless engine suite: world generation, lighting, ray casting, meshing, inventory, recipe/quest/upgrade data integrity, save + world-edit replay, determinism. |
 | `npm run test:ui` | jsdom suite: procedural texture atlas, item icons, HUD, every modal screen, touch controls. |
 | `npm run test:e2e` | Boots the real `Game` headlessly: mining, drops, placement, crafting, market, upgrades, contracts, robot mining + delivery, survival, death/respawn, save system. |
+| `npm run test:physics` | Spawn safety, landing resolution, void recovery and fall damage. These are the regressions that made the game unplayable, so they stay covered. |
 | `npm run build` | `tsc --noEmit && vite build` — the exact artifact Vercel deploys. |
 
 `npm run verify` runs all of the above in order and is the single command a

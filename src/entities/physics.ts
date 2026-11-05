@@ -7,6 +7,9 @@ export interface MoveResult {
   landed: boolean;
 }
 
+/** Largest distance a single collision step may cover (blocks). */
+const MAX_STEP = 0.35;
+
 /** True when the AABB overlaps any solid voxel. */
 export function collides(
   world: World,
@@ -35,6 +38,10 @@ export function collides(
 /**
  * Move an entity with voxel collision, resolving one axis at a time and
  * stepping up small ledges automatically.
+ *
+ * Movement is split into sub-steps of at most {@link MAX_STEP} blocks so a
+ * fast fall (terminal velocity is 46 blocks/s) can never tunnel through a
+ * one-block-thick floor.
  */
 export function moveEntity(
   world: World,
@@ -46,6 +53,28 @@ export function moveEntity(
   stepHeight: number,
 ): MoveResult {
   const result: MoveResult = { grounded: false, hitWall: false, landed: false };
+
+  const distance = Math.hypot(vel.x, vel.y, vel.z) * dt;
+  const steps = Math.max(1, Math.ceil(distance / MAX_STEP));
+  const subDt = dt / steps;
+
+  for (let step = 0; step < steps; step++) {
+    moveStep(world, pos, vel, half, height, subDt, stepHeight, result);
+  }
+  return result;
+}
+
+/** One collision-resolving sub-step. */
+function moveStep(
+  world: World,
+  pos: THREE.Vector3,
+  vel: THREE.Vector3,
+  half: number,
+  height: number,
+  dt: number,
+  stepHeight: number,
+  result: MoveResult,
+): void {
   const wasGrounded = collides(world, pos.x, pos.y - 0.06, pos.z, half, height);
 
   // --- X ---
@@ -105,7 +134,8 @@ export function moveEntity(
   pos.y += dy;
   if (collides(world, pos.x, pos.y, pos.z, half, height)) {
     if (dy <= 0) {
-      pos.y = Math.floor(pos.y) + 1e-4;
+      // Land on top of the block that was hit, not inside it.
+      pos.y = Math.floor(pos.y) + 1 + 1e-4;
       result.grounded = true;
       if (dy < -0.08) result.landed = true;
       vel.y = 0;
@@ -119,8 +149,6 @@ export function moveEntity(
       result.grounded = true;
     }
   }
-
-  return result;
 }
 
 /** Push an entity out of any block it is stuck inside (e.g. after a world edit). */

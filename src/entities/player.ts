@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLAYER } from '../core/constants';
+import { PLAYER, WORLD_X, WORLD_Z } from '../core/constants';
 import { Block, blockDef } from '../world/blocks';
 import { moveEntity, unstick } from './physics';
 import {
@@ -118,9 +118,20 @@ export class Player {
     this.game.onPlayerDied(cause);
   }
 
+  /** Pull the miner back onto the map when they leave the world. */
+  recoverFromVoid(): void {
+    const spawn = this.game.world.terrain.spawn;
+    this.pos.set(spawn.x, spawn.y, spawn.z);
+    this.vel.set(0, 0, 0);
+    this.fallDistance = 0;
+    unstick(this.game.world, this.pos, PLAYER.width / 2, PLAYER.height);
+    this.game.notify('You slipped out of the shaft — the company pulled you back.', 'warn');
+    this.game.audio.beep(420, 0.12);
+  }
+
   respawnAtHome(): void {
     const spawn = this.game.world.terrain.spawn;
-    this.pos.set(spawn.x, spawn.y + 1, spawn.z);
+    this.pos.set(spawn.x, spawn.y, spawn.z);
     this.vel.set(0, 0, 0);
     this.health = this.maxHealth;
     this.stamina = PLAYER.maxStamina;
@@ -144,6 +155,21 @@ export class Player {
     if (this.dead) {
       this.deathTimer -= dt;
       if (this.deathTimer <= 0) this.respawnAtHome();
+      this.updateCamera();
+      return;
+    }
+
+    // --- out-of-world guard ---
+    // The map edges are open: without this the miner walks off the world and
+    // falls forever, taking the whole chunk system with them.
+    if (
+      this.pos.y < -2 ||
+      this.pos.x < 1 ||
+      this.pos.z < 1 ||
+      this.pos.x > WORLD_X - 1 ||
+      this.pos.z > WORLD_Z - 1
+    ) {
+      this.recoverFromVoid();
       this.updateCamera();
       return;
     }
@@ -236,23 +262,29 @@ export class Player {
       dt,
       this.inWater ? 0 : PLAYER.stepHeight,
     );
+    const wasGrounded = this.onGround;
     this.onGround = result.grounded;
 
     // Fall damage
     if (this.vel.y < 0 && !this.onGround) {
       this.fallDistance += before - this.pos.y;
     }
-    if (result.landed) {
+    if (this.onGround && !wasGrounded) {
+      // Touchdown. The damage is applied on the transition to grounded: the
+      // proximity check can flag the ground a frame before the body actually
+      // hits it, and waiting for the collision lost every fall entirely.
       const safe = PLAYER.fallSafeHeight;
-      if (this.fallDistance > safe) {
-        let dmg = (this.fallDistance - safe) * 1.7;
+      if (this.fallDistance > safe && !this.inWater) {
+        // One point of health per block, like the games this is modelled on.
+        let dmg = (this.fallDistance - safe) * PLAYER.fallDamagePerBlock;
         if (this.game.hasUpgrade('deep_suit')) dmg *= 0.5;
         if (dmg > 0) this.damage(dmg, 'the fall');
       }
       this.fallDistance = 0;
       this.game.audio.step(this.sprinting ? 0.9 : 0.6);
+    } else if (this.onGround) {
+      this.fallDistance = 0;
     }
-    if (this.onGround) this.fallDistance = 0;
 
     // ---- stamina ----
     if (this.sprinting) {

@@ -141,7 +141,9 @@ export class Input {
 
   private onMouseDown = (e: MouseEvent): void => {
     if (!this.enabled || this.blocked) return;
-    if (!this.pointerLocked) return;
+    // Mining and placing must work even when the pointer is not locked:
+    // browsers refuse the lock in some embeds and the player releases it with
+    // Esc, which used to make the game feel broken.
     if (e.button === 0) this.mouseLeft = true;
     if (e.button === 2) this.mouseRight = true;
   };

@@ -35,8 +35,10 @@ export function generateTerrain(
       const temp = fbm2(x * 0.006, z * 0.006, seed + 211, 3);
 
       // Keep the middle of the map flat so the home shaft always makes sense.
+      // The base itself is dead flat (the hut has to sit on solid ground).
       const distToCentre = Math.hypot(x - centreX, z - centreZ);
-      const flatten = Math.max(0, 1 - distToCentre / 16);
+      const flatten =
+        distToCentre <= 7 ? 1 : Math.max(0, 1 - (distToCentre - 7) / 9);
 
       let height =
         18 + cont * 24 + hill * 7 + Math.pow(mtn, 3.2) * 34 + volcano * 8;
@@ -215,6 +217,14 @@ function buildHomeShaft(
     }
   }
 
+  // Zig-zag staircase: the miner can walk down instead of falling the full
+  // twenty blocks, and a fall is broken up by the steps.
+  for (let y = floorY; y <= surfaceY; y++) {
+    const side = (y - floorY) % 2 === 0 ? -1 : 1;
+    set(cx + side, y, cz, Block.PLANK);
+    set(cx + side, y, cz - 1, Block.PLANK);
+  }
+
   // Landing platform at the bottom.
   for (let z = cz - 4; z <= cz + 4; z++) {
     for (let x = cx - 4; x <= cx + 4; x++) {
@@ -237,7 +247,9 @@ function buildHomeShaft(
     set(cx + 1, y, cz - 1, Block.PLANK);
   }
 
-  // Surface hut around the shaft mouth.
+  // Surface hut around the shaft mouth. It has to be tall enough for the
+  // miner to walk around inside: floor at surfaceY, two wall courses and a
+  // roof at surfaceY + 3.
   for (let z = cz - 5; z <= cz + 5; z++) {
     for (let x = cx - 5; x <= cx + 5; x++) {
       const edge = Math.abs(x - cx) === 5 || Math.abs(z - cz) === 5;
@@ -245,21 +257,25 @@ function buildHomeShaft(
         const corner = Math.abs(x - cx) === 5 && Math.abs(z - cz) === 5;
         if (!corner) {
           set(x, surfaceY + 1, z, Block.PLANK);
-          set(x, surfaceY + 2, z, Block.AIR);
+          set(x, surfaceY + 2, z, Block.PLANK);
+          set(x, surfaceY + 3, z, Block.AIR);
         }
       }
     }
   }
   for (let z = cz - 4; z <= cz + 4; z++) {
-    set(cx - 4, surfaceY + 2, z, Block.PLANK);
-    set(cx + 4, surfaceY + 2, z, Block.PLANK);
+    set(cx - 4, surfaceY + 3, z, Block.PLANK);
+    set(cx + 4, surfaceY + 3, z, Block.PLANK);
   }
   for (let x = cx - 4; x <= cx + 4; x++) {
-    set(x, surfaceY + 2, cz - 4, Block.PLANK);
-    set(x, surfaceY + 2, cz + 4, Block.PLANK);
+    set(x, surfaceY + 3, cz - 4, Block.PLANK);
+    set(x, surfaceY + 3, cz + 4, Block.PLANK);
   }
   set(cx - 4, surfaceY + 2, cz - 4, Block.LAMP);
   set(cx + 4, surfaceY + 2, cz + 4, Block.LAMP);
+  // A charge pad on the hut floor: BOLT-7 has to be able to recharge without
+  // the miner first descending the whole shaft.
+  set(cx + 2, surfaceY + 1, cz - 2, Block.CHARGER);
 
   // Doorway on the north wall so the miner can walk out, plus a window.
   set(cx - 1, surfaceY + 1, cz - 4, Block.AIR);
@@ -270,6 +286,11 @@ function buildHomeShaft(
   set(cx + 1, surfaceY + 2, cz - 4, Block.AIR);
   set(cx + 4, surfaceY + 1, cz, Block.AIR);
   set(cx + 4, surfaceY + 2, cz, Block.AIR);
+  // Cap the doorway so the hut keeps its roof.
+  set(cx - 1, surfaceY + 3, cz - 4, Block.PLANK);
+  set(cx, surfaceY + 3, cz - 4, Block.PLANK);
+  set(cx + 1, surfaceY + 3, cz - 4, Block.PLANK);
+  set(cx + 4, surfaceY + 3, cz, Block.PLANK);
   // Short steps down to the surface outside the door.
   set(cx - 1, surfaceY, cz - 5, Block.PLANK);
   set(cx, surfaceY, cz - 5, Block.PLANK);
@@ -292,7 +313,11 @@ function buildHomeShaft(
     growPine(blocks, x, h + 1, z, seed + attempt);
   }
 
-  return { x: cx + 0.5, y: surfaceY, z: cz + 0.5 };
+  // The spawn sits on the hut floor beside the shaft mouth — spawning over
+  // the shaft dropped the player twenty blocks into a death pit.
+  // `spawn` is the position of the miner's feet: the block below is solid and
+  // the block at the spawn itself is clear.
+  return { x: cx - 3.5, y: surfaceY + 1, z: cz + 0.5 };
 }
 
 function growPine(

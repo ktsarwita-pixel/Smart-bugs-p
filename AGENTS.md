@@ -15,6 +15,7 @@ assets — every texture, icon and sound is generated in code.
 | Engine tests | `npm run test:unit` |
 | UI tests (jsdom) | `npm run test:ui` |
 | End-to-end game tests | `npm run test:e2e` |
+| Physics / spawn regression tests | `npm run test:physics` |
 | Everything | `npm run verify` |
 
 `npm run verify` is the gate — **no change is delivered until it is green.**
