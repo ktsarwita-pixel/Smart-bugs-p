@@ -417,6 +417,29 @@ check('tools expose tool stats', !!itemDef('pickaxe_iron').tool);
 check('placeable items expose a block', itemDef('stone').place !== undefined);
 check('gear items are flagged', itemDef('gas_mask').gear === 'mask');
 
+/* ------------------------------------------------------------------ */
+section('Sprites');
+const { hasItemIcon } = await import('../src/render/textures');
+const { allItemIds } = await import('../src/game/items');
+const missing = allItemIds().filter((id) => !hasItemIcon(id));
+check(
+  'every item has a sprite of its own',
+  missing.length === 0,
+  `without an icon: ${missing.join(', ')}`,
+);
+// The tools have to look different from each other.
+const toolIds = allItemIds().filter((id) => !!itemDef(id).tool);
+check(
+  'the game ships tools to draw',
+  toolIds.length >= 6,
+  `${toolIds.length} tools`,
+);
+
+check(
+  'the torch is drawn as a post, not a cross',
+  (await import('../src/world/blocks')).blockDef(19).render === 'torch',
+);
+
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures > 0) {
   console.error(`${failures} check(s) failed`);

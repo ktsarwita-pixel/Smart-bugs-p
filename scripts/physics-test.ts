@@ -158,7 +158,8 @@ check(
   `z=${player.pos.z.toFixed(3)}, expected ${restingZ.toFixed(3)}`,
 );
 
-// A single block step must be climbed, not bounced off.
+// A one block ledge must be climbed with a glide, not with a jump: the miner
+// used to be teleported a whole block up, which read as an automatic jump.
 for (let y = 1; y <= 2; y++) {
   for (let z = wallZ - 2; z <= wallZ; z++) {
     world.setBlock(wallX, groundY + y, z, Block.AIR);
@@ -169,14 +170,80 @@ player.pos.set(wallX + 0.5, groundY + 1, 40.5);
 player.vel.set(0, 0, 0);
 player.yaw = 0;
 player.dead = false;
+player.fallDistance = 0;
+
+let biggestRise = 0;
+let highestY = -Infinity;
+let climbReversals = 0;
+let prevY = player.pos.y;
+let prevZ = player.pos.z;
+let prevDir = 0;
+for (let i = 0; i < 150; i++) {
+  state.moveForward = 1;
+  player.update(0.016, game.input);
+  const rise = player.pos.y - prevY;
+  if (rise > biggestRise) biggestRise = rise;
+  if (player.pos.y > highestY) highestY = player.pos.y;
+  const dir = Math.sign(player.pos.z - prevZ);
+  if (dir !== 0) {
+    if (prevDir !== 0 && dir !== prevDir) climbReversals++;
+    prevDir = dir;
+  }
+  prevY = player.pos.y;
+  prevZ = player.pos.z;
+}
+check(
+  'the miner climbs a one block ledge',
+  highestY > groundY + 1.5,
+  `the miner reached y=${highestY.toFixed(2)}, the ledge top is ${groundY + 2}`,
+);
+check(
+  'climbing a ledge is a glide, not a jump',
+  biggestRise < 0.25,
+  `the miner rose ${biggestRise.toFixed(3)} blocks in a single frame`,
+);
+check(
+  'the miner keeps walking over the ledge',
+  player.pos.z < wallZ - 2.5,
+  `z=${player.pos.z.toFixed(2)}`,
+);
+check(
+  'gliding up a ledge does not push the miner back',
+  climbReversals === 0,
+  `the miner reversed direction ${climbReversals} times`,
+);
+
+// A two block wall is too tall to walk over: the miner has to jump it.
+world.setBlock(wallX, groundY + 1, wallZ - 2, Block.AIR);
+world.setBlock(wallX, groundY + 1, wallZ - 1, Block.STONE);
+world.setBlock(wallX, groundY + 2, wallZ - 1, Block.STONE);
+player.pos.set(wallX + 0.5, groundY + 1, 40.5);
+player.vel.set(0, 0, 0);
+player.yaw = 0;
+player.dead = false;
+player.fallDistance = 0;
+let wallReversals = 0;
+let wallDir = 0;
+let wallZ0 = player.pos.z;
 for (let i = 0; i < 120; i++) {
   state.moveForward = 1;
   player.update(0.016, game.input);
+  const dir = Math.sign(player.pos.z - wallZ0);
+  if (dir !== 0) {
+    if (wallDir !== 0 && dir !== wallDir) wallReversals++;
+    wallDir = dir;
+  }
+  wallZ0 = player.pos.z;
 }
 check(
-  'the miner climbs a one block step and keeps walking',
-  player.pos.z < wallZ - 2.5 && player.pos.y > groundY - 0.5,
-  `pos=(${player.pos.x.toFixed(2)}, ${player.pos.y.toFixed(2)}, ${player.pos.z.toFixed(2)})`,
+  'a two block wall stops the miner',
+  player.pos.y < groundY + 1.5,
+  `y=${player.pos.y.toFixed(2)}`,
+);
+check(
+  'a two block wall does not shove the miner back and forth',
+  wallReversals === 0,
+  `the miner reversed direction ${wallReversals} times`,
 );
 
 /* ------------------------------------------------------------------ */

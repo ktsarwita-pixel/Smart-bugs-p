@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { ROBOT } from '../core/constants';
 import { Block, blockDef, isValuable } from '../world/blocks';
 import { itemDef } from '../game/items';
-import { moveEntity, unstick } from './physics';
+import { createStepState, moveEntity, unstick, type StepState } from './physics';
 import { animateRobot, applyLight, createRobotModel, type CharacterParts } from './models';
 import type { Game } from '../game/game';
 import type { World } from '../world/world';
@@ -31,6 +31,8 @@ const SCAN_INTERVAL = 22;
 export class Robot {
   readonly pos = new THREE.Vector3();
   readonly vel = new THREE.Vector3();
+  /** Smooth step-up state: BOLT-7 glides up a ledge instead of hopping. */
+  readonly stepState: StepState = createStepState();
   yaw = 0;
 
   state: RobotState = 'FOLLOW';
@@ -248,6 +250,7 @@ export class Robot {
       ROBOT.height,
       dt,
       1.05,
+      this.stepState,
     );
     if (result.grounded) {
       this.vel.y = 0;

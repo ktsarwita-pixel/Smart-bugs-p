@@ -93,6 +93,7 @@ section('Booting the game');
 const { Game } = await import('../src/game/game');
 const { Block } = await import('../src/world/blocks');
 const { itemDef } = await import('../src/game/items');
+const { buildChunkMesh } = await import('../src/world/mesher');
 
 const game = new Game(window.document.getElementById('app') as HTMLElement);
 await game.boot();
@@ -276,6 +277,53 @@ for (const [dx, dz] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
 }
 check('spawn has at least one open side', exits > 0, `open sides=${exits}`);
 check('robot can spawn beside the player', true);
+
+/* ------------------------------------------------------------------ */
+section('Torch post');
+/* ------------------------------------------------------------------ */
+// A torch used to be drawn as a diagonal cross, which turned the vertical
+// sprite into a leaning stick. It is a post now: two pixels wide, ten tall.
+const torchX = 40;
+const torchZ = 40;
+const torchGround = world.terrain.heightMap[torchX + torchZ * 128];
+for (let y = 1; y <= 3; y++) world.setBlock(torchX, torchGround + y, torchZ, Block.AIR);
+world.setBlock(torchX, torchGround + 1, torchZ, Block.TORCH);
+const torchMesh = buildChunkMesh(world, Math.floor(torchX / 16), Math.floor(torchZ / 16));
+const torchPos = torchMesh.cutout?.getAttribute('position');
+check('the torch is meshed', !!torchPos && torchPos.count > 0);
+if (torchPos) {
+  // The chunk holds other cut-out blocks too, so only the vertices of the
+  // torch column are measured.
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let found = 0;
+  for (let i = 0; i < torchPos.count; i++) {
+    const x = torchPos.getX(i);
+    const y = torchPos.getY(i);
+    if (x < torchX + 0.3 || x > torchX + 0.7) continue;
+    if (y < torchGround + 1 || y > torchGround + 2) continue;
+    found++;
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  check('the torch has its own vertices', found === 20, `${found} vertices`);
+  check(
+    'the torch post is two pixels wide',
+    Math.abs(maxX - minX - 2 / 16) < 0.01,
+    `width=${(maxX - minX).toFixed(3)}`,
+  );
+  check(
+    'the torch post is ten pixels tall',
+    Math.abs(maxY - minY - 10 / 16) < 0.01,
+    `height=${(maxY - minY).toFixed(3)}`,
+  );
+  check(
+    'the torch stands on the block below it',
+    Math.abs(minY - (torchGround + 1)) < 0.01,
+    `y=${minY.toFixed(3)}`,
+  );
+}
 
 /* ------------------------------------------------------------------ */
 section('Survival');
