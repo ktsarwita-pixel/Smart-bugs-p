@@ -94,7 +94,11 @@ function moveStep(
         }
       }
       if (!stepped) {
-        pos.x = vel.x > 0 ? Math.floor(pos.x + half) - half - 1e-4 : Math.floor(pos.x - half) + 1 + half + 1e-4;
+        // Snap back to just outside the block that stopped us. This has to be
+        // worked out from the blocked target, not from where the entity
+        // started: using the old position threw the miner a whole block back
+        // every time they touched a wall, which looked like a glitch.
+        pos.x = vel.x > 0 ? Math.floor(target + half) - half - 1e-4 : Math.floor(target - half) + 1 + half + 1e-4;
         vel.x = 0;
         result.hitWall = true;
       }
@@ -120,7 +124,7 @@ function moveStep(
         }
       }
       if (!stepped) {
-        pos.z = vel.z > 0 ? Math.floor(pos.z + half) - half - 1e-4 : Math.floor(pos.z - half) + 1 + half + 1e-4;
+        pos.z = vel.z > 0 ? Math.floor(target + half) - half - 1e-4 : Math.floor(target - half) + 1 + half + 1e-4;
         vel.z = 0;
         result.hitWall = true;
       }

@@ -68,6 +68,21 @@ body {
   pointer-events: auto;
 }
 
+/*
+ * The HUD and the touch layer cover the whole screen. Without this they
+ * swallow every touch meant for the canvas, so the miner could not drag to
+ * look around on a phone and the interface felt dead.
+ */
+#ui-root > .hud,
+#ui-root > .touch-layer {
+  pointer-events: none;
+}
+
+/* Only the hotbar slots in the HUD are meant to be tapped. */
+#ui-root > .hud .hotbar .slot {
+  pointer-events: auto;
+}
+
 /* ---------------------------------------------------------------
    Loading screen
 --------------------------------------------------------------- */

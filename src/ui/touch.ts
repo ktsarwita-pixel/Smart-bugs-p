@@ -48,7 +48,11 @@ export class TouchControls {
       this.stickPointer = e.pointerId;
       const rect = this.joystick.getBoundingClientRect();
       this.stickOrigin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      this.joystick.setPointerCapture(e.pointerId);
+      try {
+        this.joystick.setPointerCapture(e.pointerId);
+      } catch {
+        /* not every browser implements pointer capture */
+      }
       this.updateStick(e.clientX, e.clientY);
       e.preventDefault();
     };
