@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#1b1410" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="description"
+      content="Sulfur Miners v2 — a Minecraft-style voxel mining adventure with a loyal robot miner companion."
+    />
+    <title>Sulfur Miners v2</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+      <div id="ui-root" aria-live="polite"></div>
+
+      <div id="loading-screen" class="loading-screen">
+        <div class="loading-card">
+          <div class="loading-logo">
+            <span class="logo-cube">⛏</span>
+            <div>
+              <h1>SULFUR MINERS</h1>
+              <p class="logo-sub">Version 2 · Deep Shaft Edition</p>
+            </div>
+          </div>
+          <div class="loading-bar"><div class="loading-bar-fill" id="loading-fill"></div></div>
+          <p class="loading-status" id="loading-status">Generating terrain…</p>
+          <div class="loading-tip" id="loading-tip"></div>
+        </div>
+      </div>
+
+      <div id="orientation-nudge" class="orientation-nudge" hidden>
+        <div class="nudge-inner">↻ Rotate your device for more room</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
