@@ -162,6 +162,17 @@ check(
   'the selection outline follows the block',
   game.selectionBox.visible === true && game.player.hoverTarget !== null,
 );
+// The cracks spread over a block while it is being mined.
+game.input.setTouchMine(true);
+game.update(0.016);
+check(
+  'the cracks show on the block being mined',
+  game.crackMesh.visible === true && game.player.mineProgress > 0,
+  `progress=${game.player.mineProgress.toFixed(2)}`,
+);
+game.input.setTouchMine(false);
+game.update(0.016);
+check('the cracks disappear when the mining stops', game.crackMesh.visible === false);
 game.player.pos.copy(savedPos);
 game.player.pitch = savedPitch;
 game.player.vel.copy(savedVel);
