@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { MOB, WORLD_X, WORLD_Y, WORLD_Z } from '../core/constants';
 import { Block } from '../world/blocks';
 import { createStepState, moveEntity, type StepState } from './physics';
+import { createShadow, updateShadow } from './models';
 import type { Game } from '../game/game';
 
 export type MobKind = 'crawler' | 'magmite';
@@ -12,6 +13,9 @@ interface MobModel {
   eyes: THREE.MeshBasicMaterial[];
   bodyMaterial: THREE.MeshBasicMaterial;
   baseColor: THREE.Color;
+  /** Extra glowy pieces, e.g. the cracks of a magmite. */
+  glow: THREE.MeshBasicMaterial[];
+  shadow: THREE.Mesh;
 }
 
 export interface Mob {
@@ -30,27 +34,78 @@ export interface Mob {
   hurtTimer: number;
 }
 
-function createMobModel(kind: MobKind): MobModel {
+export function createMobModel(kind: MobKind): MobModel {
   const group = new THREE.Group();
   const legs: THREE.Object3D[] = [];
   const eyes: THREE.MeshBasicMaterial[] = [];
+  const glow: THREE.MeshBasicMaterial[] = [];
 
-  const baseColor = new THREE.Color(kind === 'crawler' ? 0x4a3a5c : 0x7a3418);
+  const crawler = kind === 'crawler';
+  const baseColor = new THREE.Color(crawler ? 0x5c4a72 : 0x8c3d1c);
   const bodyMaterial = new THREE.MeshBasicMaterial({ color: baseColor.getHex() });
+  const shellMaterial = new THREE.MeshBasicMaterial({
+    color: crawler ? 0x413354 : 0x5e2712,
+  });
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.8), bodyMaterial);
-  body.position.y = 0.42;
-  group.add(body);
+  if (crawler) {
+    // A low, wide cave dweller: segmented back, heavy jaws, thin legs.
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.34, 0.66), bodyMaterial);
+    body.position.y = 0.46;
+    group.add(body);
+    // Segmented plates along the back.
+    for (let i = 0; i < 4; i++) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5 - i * 0.06, 0.12, 0.14), shellMaterial);
+      plate.position.set(0, 0.66 - i * 0.01, -0.24 + i * 0.16);
+      group.add(plate);
+    }
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.34), bodyMaterial);
+    head.position.set(0, 0.42, 0.46);
+    group.add(head);
+    // Mandibles.
+    for (const side of [-1, 1]) {
+      const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.28), shellMaterial);
+      jaw.position.set(side * 0.12, 0.3, 0.58);
+      jaw.rotation.y = side * 0.3;
+      group.add(jaw);
+    }
+    // Spikes on the head.
+    for (let i = 0; i < 3; i++) {
+      const spike = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.16, 0.06), shellMaterial);
+      spike.position.set((i - 1) * 0.12, 0.62, 0.42);
+      spike.rotation.x = -0.3;
+      group.add(spike);
+    }
+  } else {
+    // A magmite: a blob of cooling magma with glowing cracks.
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.5, 0.56), bodyMaterial);
+    body.position.y = 0.36;
+    group.add(body);
+    const crust = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.16, 0.62), shellMaterial);
+    crust.position.y = 0.58;
+    group.add(crust);
+    // Glowing cracks.
+    const crackMaterial = new THREE.MeshBasicMaterial({ color: 0xff7a2a });
+    glow.push(crackMaterial);
+    for (let i = 0; i < 5; i++) {
+      const crack = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.05, 0.05),
+        crackMaterial,
+      );
+      crack.position.set(0, 0.22 + (i % 3) * 0.14, -0.18 + i * 0.1);
+      crack.rotation.y = i * 0.7;
+      group.add(crack);
+    }
+    const core = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.26), new THREE.MeshBasicMaterial({ color: 0xffb03a }));
+    glow.push(core.material as THREE.MeshBasicMaterial);
+    core.position.set(0, 0.7, 0);
+    group.add(core);
+  }
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.36, 0.4), bodyMaterial);
-  head.position.set(0, 0.44, 0.5);
-  group.add(head);
-
-  const eyeMat = new THREE.MeshBasicMaterial({ color: kind === 'crawler' ? 0xff4d4d : 0xffb03a });
+  const eyeMat = new THREE.MeshBasicMaterial({ color: crawler ? 0xff4d4d : 0xffb03a });
   eyes.push(eyeMat);
   for (const side of [-1, 1]) {
     const eye = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.06), eyeMat);
-    eye.position.set(side * 0.12, 0.5, 0.72);
+    eye.position.set(side * 0.12, crawler ? 0.48 : 0.44, crawler ? 0.64 : 0.3);
     group.add(eye);
   }
 
@@ -60,20 +115,14 @@ function createMobModel(kind: MobKind): MobModel {
     const limb = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.44, 0.12), bodyMaterial);
     limb.position.y = -0.2;
     leg.add(limb);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.2), shellMaterial);
+    foot.position.set(0, -0.42, 0.03);
+    leg.add(foot);
     group.add(leg);
     legs.push(leg);
   }
 
-  if (kind === 'magmite') {
-    const core = new THREE.Mesh(
-      new THREE.BoxGeometry(0.3, 0.18, 0.3),
-      new THREE.MeshBasicMaterial({ color: 0xff7a2a }),
-    );
-    core.position.set(0, 0.62, 0);
-    group.add(core);
-  }
-
-  return { group, legs, eyes, bodyMaterial, baseColor };
+  return { group, legs, eyes, bodyMaterial, baseColor, glow, shadow: createShadow(0.36) };
 }
 
 /**
@@ -154,6 +203,8 @@ export class MobManager {
       // Presentation.
       mob.model.group.position.copy(mob.pos);
       mob.model.group.rotation.y = mob.yaw;
+      updateShadow(mob.model.shadow, this.game.world, mob.pos.x, mob.pos.y, mob.pos.z);
+      this.group.add(mob.model.shadow);
       const speed = Math.hypot(mob.vel.x, mob.vel.z);
       mob.model.legs.forEach((leg, index) => {
         leg.rotation.x = Math.sin(this.game.time * 8 * Math.min(1, speed) + index * 1.6) * 0.7;

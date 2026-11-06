@@ -139,6 +139,34 @@ if (ore) {
 }
 
 /* ------------------------------------------------------------------ */
+section('Presentation');
+const px0 = Math.floor(game.player.pos.x);
+const py0 = Math.floor(game.player.pos.y);
+const pz0 = Math.floor(game.player.pos.z);
+check('the miner casts a shadow', game.player.shadow.visible !== undefined);
+check('the dust motes are in the scene', game.scene.getObjectByName('motes') !== undefined);
+// Point the miner at a solid block and let a frame run, then put everything
+// back the way it was so the rest of the test is unaffected.
+const savedPos = game.player.pos.clone();
+const savedPitch = game.player.pitch;
+const savedVel = game.player.vel.clone();
+game.player.pos.set(px0, py0, pz0);
+game.player.pitch = -Math.PI / 2;
+game.update(0.016);
+check(
+  'the miner looks at the ground below',
+  game.player.hoverBlock !== 0,
+  `block=${game.player.hoverBlock}`,
+);
+check(
+  'the selection outline follows the block',
+  game.selectionBox.visible === true && game.player.hoverTarget !== null,
+);
+game.player.pos.copy(savedPos);
+game.player.pitch = savedPitch;
+game.player.vel.copy(savedVel);
+
+/* ------------------------------------------------------------------ */
 section('Placement');
 // Stand in the shaft, look straight ahead at a block and place against it.
 const px = Math.floor(game.player.pos.x);

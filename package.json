@@ -15,7 +15,9 @@
     "test:ui": "esbuild scripts/ui-test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/uitest.mjs --log-level=warning --external:jsdom && node node_modules/.cache/uitest.mjs",
     "test:sprites": "esbuild scripts/sprite-test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/sprites.mjs --log-level=warning --external:jsdom && node node_modules/.cache/sprites.mjs",
     "test:e2e": "esbuild scripts/integration-test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/e2e.mjs --log-level=warning --external:jsdom && node node_modules/.cache/e2e.mjs",
-    "verify": "npm run test && npm run build"
+    "verify": "npm run test && npm run build",
+    "preview:sprites": "esbuild scripts/sprite-preview.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/spritepreview.mjs --log-level=warning --external:jsdom --external:three && node node_modules/.cache/spritepreview.mjs",
+    "preview:models": "esbuild scripts/model-preview.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/modelpreview.mjs --log-level=warning --external:jsdom --external:three && node node_modules/.cache/modelpreview.mjs"
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",

@@ -3,9 +3,19 @@ import { ROBOT } from '../core/constants';
 import { Block, blockDef, isValuable } from '../world/blocks';
 import { itemDef } from '../game/items';
 import { createStepState, moveEntity, unstick, type StepState } from './physics';
-import { animateRobot, applyLight, createRobotModel, type CharacterParts } from './models';
+import {
+  animateRobot,
+  applyLight,
+  createRobotModel,
+  createShadow,
+  updateShadow,
+  type CharacterParts,
+} from './models';
 import type { Game } from '../game/game';
 import type { World } from '../world/world';
+
+/** The colour of the sparks BOLT-7 throws while it drills. */
+const DRILL_SPARK = new THREE.Color(0xffc94a);
 
 export type RobotState =
   | 'FOLLOW'
@@ -57,10 +67,13 @@ export class Robot {
   private revealTimer = 0;
 
   readonly model: CharacterParts;
+  /** The soft shadow under BOLT-7. */
+  readonly shadow: THREE.Mesh;
   private walkPhase = 0;
 
   constructor(private readonly game: Game) {
     this.model = createRobotModel();
+    this.shadow = createShadow(0.44);
   }
 
   get cargoCount(): number {
@@ -281,6 +294,7 @@ export class Robot {
 
     this.model.group.position.copy(this.pos);
     this.model.group.rotation.y = this.yaw;
+    updateShadow(this.shadow, world, this.pos.x, this.pos.y, this.pos.z);
     animateRobot(
       this.model,
       this.walkPhase,
@@ -507,6 +521,9 @@ export class Robot {
     );
   }
 
+  /** Counts down to the next spark while the drill is running. */
+  private sparkTimer = 0;
+
   private updateMining(dt: number): void {
     const world = this.game.world;
     if (!this.mineTarget || !this.findOreTarget()) {
@@ -548,6 +565,20 @@ export class Robot {
       this.vel.x *= 0.5;
       this.vel.z *= 0.5;
       this.mineTimer += dt;
+      // Sparks fly while the drill bites into the rock.
+      this.sparkTimer -= dt;
+      if (this.sparkTimer <= 0) {
+        this.sparkTimer = 0.12;
+        this.game.particles.spawn(
+          target.clone().add(new THREE.Vector3(0, 0.3, 0)),
+          DRILL_SPARK,
+          2,
+          1.6,
+          0.2,
+          12,
+          0.35,
+        );
+      }
       const speedUp = this.game.hasUpgrade('drill_overhaul') ? 1.5 : 1;
       const needed = (ROBOT.miningTime / speedUp) * 0.5;
       if (this.mineTimer >= needed) {

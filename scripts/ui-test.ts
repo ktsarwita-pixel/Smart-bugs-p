@@ -134,6 +134,7 @@ const player = {
   mineProgress: 0.4,
   viewMode: 'first' as const,
   lanternOn: false,
+  hoverBlock: 0,
 };
 
 const robot = {
@@ -185,6 +186,7 @@ const baseGame = {
     reward: 60,
   },
   surfaceHeight: 34,
+  world: { terrain: { biomeMap: new Uint8Array(128 * 128) } },
   clockString: () => '07:30',
   hasUpgrade: (id: string) => id === 'battery_pack',
   currentTool: () => null,
@@ -247,6 +249,23 @@ const hotbarSlot = hud.root.querySelectorAll('.slot')[0];
 check('hotbar renders item icons', !!hotbarSlot?.querySelector('img'));
 hud.notify('Test toast', 'good');
 check('toasts are appended', hud.root.querySelectorAll('.toast').length === 1);
+check('hit marker exists', !!hud.root.querySelector('[data-hitmarker]'));
+check('target name exists', !!hud.root.querySelector('[data-target]'));
+check('biome chip exists', !!hud.root.querySelector('[data-biome]'));
+hud.showHitMarker('mob');
+check('hit marker flashes on a hit', hud.root.querySelector('[data-hitmarker]')?.classList.contains('show') === true);
+check(
+  'the biome is named',
+  (hud.root.querySelector('[data-biome]')?.textContent ?? '').length > 0,
+  hud.root.querySelector('[data-biome]')?.textContent ?? '',
+);
+player.hoverBlock = 3;
+hud.update(0.016, 60);
+check(
+  'the block under the crosshair is named',
+  (hud.root.querySelector('[data-target]')?.textContent ?? '').length > 0,
+  hud.root.querySelector('[data-target]')?.textContent ?? '',
+);
 
 /* ------------------------------------------------------------------ */
 /* Screens                                                             */

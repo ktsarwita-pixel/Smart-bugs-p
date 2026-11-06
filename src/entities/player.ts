@@ -1,12 +1,19 @@
 import * as THREE from 'three';
 import { PLAYER, WORLD_X, WORLD_Z } from '../core/constants';
 import { Block, blockDef } from '../world/blocks';
+import { dustColor } from '../render/palette';
 import { createStepState, moveEntity, unstick, type StepState } from './physics';
 import {
+  animateIdle,
+  animateLand,
+  animateLandRelease,
   animateSwing,
   animateWalk,
   applyLight,
   createMinerModel,
+  createShadow,
+  setHeldTool,
+  updateShadow,
   type CharacterParts,
 } from './models';
 import type { Input } from '../core/input';
@@ -46,18 +53,30 @@ export class Player {
   deathTimer = 0;
   mineTarget: MineTarget | null = null;
   mineProgress = 0;
+  /** The block the miner is currently looking at (Block.AIR when none). */
+  hoverBlock: number = Block.AIR;
+  /** Where that block is, so the game can draw a selection box around it. */
+  hoverTarget: { x: number; y: number; z: number } | null = null;
   swingTimer = 0;
+  /** Counts down after a hard landing so the miner can squash. */
+  landTimer = 0;
+  private lastHeldId = '';
   walkPhase = 0;
   lanternOn = false;
   respawnPoint = new THREE.Vector3();
 
   readonly model: CharacterParts;
+  /** The soft shadow under the miner. */
+  readonly shadow: THREE.Mesh;
   private digSoundTimer = 0;
+  /** Counts down to the next footstep. */
+  private stepTimer = 0;
   private lastGasTick = 0;
 
   constructor(private readonly game: Game) {
     this.model = createMinerModel();
     this.model.group.visible = false;
+    this.shadow = createShadow(0.4);
   }
 
   get eyeHeight(): number {
@@ -275,6 +294,7 @@ export class Player {
     if (this.vel.y < 0 && !this.onGround) {
       this.fallDistance += before - this.pos.y;
     }
+    const landingSpeed = this.fallDistance;
     if (this.onGround && !wasGrounded) {
       // Touchdown. The damage is applied on the transition to grounded: the
       // proximity check can flag the ground a frame before the body actually
@@ -288,6 +308,8 @@ export class Player {
       }
       this.fallDistance = 0;
       this.game.audio.step(this.sprinting ? 0.9 : 0.6);
+      // A hard landing squashes the miner for a moment.
+      if (landingSpeed > 1.2) this.landTimer = 0.18;
     } else if (this.onGround) {
       this.fallDistance = 0;
     }
@@ -319,21 +341,71 @@ export class Player {
       this.gas = Math.min(100, this.gas + 25 * dt);
     }
 
+    // ---- what the miner is looking at ----
+    const lookHit = world.raycast(this.eyePosition, this.lookDirection, PLAYER.reach);
+    this.hoverBlock = lookHit ? lookHit.block : Block.AIR;
+    this.hoverTarget = lookHit ? { x: lookHit.x, y: lookHit.y, z: lookHit.z } : null;
+
     // ---- mining ----
-    this.updateMining(dt, input);
+    this.updateMining(dt, input, lookHit);
 
     // ---- animation ----
     const horizontalSpeed = Math.hypot(this.vel.x, this.vel.z);
     if (this.onGround && horizontalSpeed > 0.4) {
       this.walkPhase += dt * horizontalSpeed * 1.9;
     }
+
+    // ---- footsteps: a step sound and a puff of dust ----
+    if (this.onGround && horizontalSpeed > 0.9) {
+      this.stepTimer -= dt;
+      if (this.stepTimer <= 0) {
+        this.stepTimer = this.sprinting ? 0.26 : 0.4;
+        this.game.audio.step(this.sprinting ? 0.5 : 0.32);
+        const under = this.game.world.getBlock(
+          Math.floor(this.pos.x),
+          Math.floor(this.pos.y - 0.2),
+          Math.floor(this.pos.z),
+        );
+        this.game.spawnFootDust(
+          new THREE.Vector3(this.pos.x, this.pos.y + 0.06, this.pos.z),
+          under,
+        );
+      }
+    } else {
+      this.stepTimer = 0.12;
+    }
     this.model.group.position.copy(this.pos);
     this.model.group.rotation.y = this.yaw + Math.PI;
-    animateWalk(this.model, this.walkPhase, horizontalSpeed);
+    if (horizontalSpeed > 0.4 && this.onGround) {
+      animateWalk(this.model, this.walkPhase, horizontalSpeed);
+    } else {
+      animateWalk(this.model, 0, 0);
+      animateIdle(this.model, this.game.elapsed);
+    }
     if (this.swingTimer > 0) {
       this.swingTimer -= dt;
       animateSwing(this.model, 1 - Math.max(0, this.swingTimer) / 0.28);
+    } else {
+      animateLandRelease(this.model);
     }
+
+    // Landing squash.
+    if (this.landTimer > 0) {
+      this.landTimer -= dt;
+      animateLand(this.model, this.landTimer / 0.18);
+    }
+
+    // The tool in the miner's hand.
+    const held = this.game.inventory.getSelected();
+    const heldId = held?.id ?? '';
+    if (heldId !== this.lastHeldId) {
+      this.lastHeldId = heldId;
+      setHeldTool(this.model, heldId || null);
+    }
+
+    // The shadow stays on the ground.
+    updateShadow(this.shadow, world, this.pos.x, this.pos.y, this.pos.z);
+    this.shadow.visible = this.viewMode === 'third';
     const lightFactor = 0.12 + (world.lightAt(
       Math.floor(this.pos.x),
       Math.floor(this.pos.y + 1),
@@ -374,15 +446,17 @@ export class Player {
     this.lastGasTick += dt;
   }
 
-  private updateMining(dt: number, input: Input): void {
-    const world = this.game.world;
+  private updateMining(
+    dt: number,
+    input: Input,
+    hit: { x: number; y: number; z: number; block: number } | null,
+  ): void {
     if (!input.state.mine) {
       this.mineTarget = null;
       this.mineProgress = 0;
       return;
     }
 
-    const hit = world.raycast(this.eyePosition, this.lookDirection, PLAYER.reach);
     if (!hit) {
       this.mineTarget = null;
       this.mineProgress = 0;
@@ -422,6 +496,16 @@ export class Player {
     if (this.digSoundTimer <= 0) {
       this.digSoundTimer = 0.28;
       this.game.audio.dig(def.sound);
+      // Chips flying off the block that is being mined.
+      this.game.particles.spawn(
+        new THREE.Vector3(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5),
+        dustColor(hit.block),
+        2,
+        1.4,
+        0.3,
+        14,
+        0.45,
+      );
     }
     if (this.swingTimer <= 0) this.swingTimer = 0.28;
 
@@ -434,19 +518,30 @@ export class Player {
 
   private updateCamera(): void {
     const camera = this.game.camera;
+    // A soft head bob while walking, and a dip when landing.
+    const speed = Math.hypot(this.vel.x, this.vel.z);
+    const moving = this.onGround && speed > 0.6;
+    const bob = moving ? Math.sin(this.walkPhase * 2) * 0.045 : 0;
+    const sway = moving ? Math.sin(this.walkPhase) * 0.03 : 0;
+    const dip = this.landTimer > 0 ? (this.landTimer / 0.18) * 0.22 : 0;
+
     if (this.viewMode === 'first') {
-      camera.position.set(this.pos.x, this.pos.y + this.eyeHeight, this.pos.z);
+      camera.position.set(
+        this.pos.x + sway * Math.cos(this.yaw),
+        this.pos.y + this.eyeHeight + bob - dip,
+        this.pos.z - sway * Math.sin(this.yaw),
+      );
     } else {
       const dir = this.lookDirection;
       camera.position.set(
         this.pos.x - dir.x * 4.2,
-        this.pos.y + this.eyeHeight + 0.6 - dir.y * 1.2,
+        this.pos.y + this.eyeHeight + 0.6 - dir.y * 1.2 + bob - dip,
         this.pos.z - dir.z * 4.2,
       );
     }
     camera.rotation.order = 'YXZ';
     camera.rotation.y = this.yaw;
     camera.rotation.x = this.pitch;
-    camera.rotation.z = 0;
+    camera.rotation.z = moving ? Math.sin(this.walkPhase) * 0.012 : 0;
   }
 }

@@ -404,7 +404,10 @@ function pushQuad(
       sky /= count;
       block /= count;
     }
-    const shade = face.shade * aoFactor;
+    // A little per-block variation, so a wall of stone is not perfectly flat.
+    const hash = ((bx * 73856093) ^ (by * 19349663) ^ (bz * 83492791)) >>> 0;
+    const jitter = 0.93 + ((hash & 255) / 255) * 0.14;
+    const shade = face.shade * aoFactor * jitter;
     b.light.push3(block / 15, sky / 15, shade * baseBrightness);
   }
 

@@ -1,8 +1,11 @@
 import { itemIcon } from '../render/textures';
 import { itemDef } from '../game/items';
+import { blockDef } from '../world/blocks';
 import { robotStateLabel } from '../entities/robot';
 import { PLAYER } from '../core/constants';
 import type { Game } from '../game/game';
+
+const BIOME_NAMES = ['Verdant Flats', 'Ash Badlands', 'The Caldera'];
 
 const COMPASS_POINTS: Array<[number, string]> = [
   [0, 'S'],
@@ -14,6 +17,21 @@ const COMPASS_POINTS: Array<[number, string]> = [
   [270, 'E'],
   [315, 'SE'],
 ];
+
+/** The name of the biome the miner is standing in. */
+function biomeName(
+  biomeMap: Uint8Array | undefined,
+  pos: { x: number; y: number; z: number },
+): string {
+  // Under the surface the caves have their own name.
+  if (pos.y < 18) return 'The Deep Caverns';
+  if (!biomeMap) return 'Verdant Flats';
+  const x = Math.floor(pos.x);
+  const z = Math.floor(pos.z);
+  const width = 128;
+  if (x < 0 || z < 0 || x >= width) return 'The Deep';
+  return BIOME_NAMES[biomeMap[x + z * width]] ?? 'Verdant Flats';
+}
 
 /** Heads-up display: vitals, hotbar, compass, robot panel and contracts. */
 export class HUD {
@@ -50,8 +68,14 @@ export class HUD {
   private gasVignette: HTMLElement;
   private flash: HTMLElement;
   private fpsBadge: HTMLElement;
+  private hitMarker: HTMLElement;
+  private targetName: HTMLElement;
+  private biomeChip: HTMLElement;
   private slots: HTMLElement[] = [];
+  private hitTimer = 0;
+  private targetTimer = 0;
   private lastHeldId = '';
+  private lastSelected = -1;
   private toastTimers: number[] = [];
 
   constructor(private readonly game: Game) {
@@ -61,6 +85,10 @@ export class HUD {
       <div class="crosshair">
         <span class="ch-h"></span><span class="ch-v"></span>
       </div>
+      <div class="hit-marker" data-hitmarker>
+        <i></i><i></i>
+      </div>
+      <div class="target-name" data-target></div>
       <div class="mine-progress" style="display:none">
         <svg viewBox="0 0 54 54">
           <circle class="track" cx="27" cy="27" r="24"></circle>
@@ -100,6 +128,7 @@ export class HUD {
         <div class="chip" data-credits><b>0</b> credits</div>
         <div class="chip" data-depth>Depth <b>0</b> m</div>
         <div class="chip" data-clock>06:00</div>
+        <div class="chip biome" data-biome>Verdant Flats</div>
       </div>
       <div class="robot-panel">
         <h4><span>BOLT-7</span><span data-robotstate>FOLLOWING</span></h4>
@@ -154,6 +183,9 @@ export class HUD {
     this.gasVignette = this.root.querySelector('[data-gasvig]') as HTMLElement;
     this.flash = this.root.querySelector('[data-flash]') as HTMLElement;
     this.fpsBadge = this.root.querySelector('[data-fps]') as HTMLElement;
+    this.hitMarker = this.root.querySelector('[data-hitmarker]') as HTMLElement;
+    this.targetName = this.root.querySelector('[data-target]') as HTMLElement;
+    this.biomeChip = this.root.querySelector('[data-biome]') as HTMLElement;
 
     this.buildHotbar();
     this.buildCompass();
@@ -200,6 +232,16 @@ export class HUD {
     }, 2600);
     this.toastTimers.push(timer);
     if (this.toasts.children.length > 5) this.toasts.firstElementChild?.remove();
+  }
+
+  /** A short flash on the crosshair: the swing connected with something. */
+  showHitMarker(kind: 'block' | 'mob' = 'block'): void {
+    this.hitMarker.dataset.kind = kind;
+    this.hitMarker.classList.remove('show');
+    // Restart the animation.
+    void this.hitMarker.offsetWidth;
+    this.hitMarker.classList.add('show');
+    this.hitTimer = 0.18;
   }
 
   flashDamage(): void {
@@ -266,6 +308,16 @@ export class HUD {
     }
 
     // --- hotbar ---
+    if (game.inventory.selected !== this.lastSelected) {
+      this.lastSelected = game.inventory.selected;
+      const el = this.slots[this.lastSelected];
+      if (el) {
+        el.classList.remove('equip');
+        // Restart the pop animation.
+        void el.offsetWidth;
+        el.classList.add('equip');
+      }
+    }
     const selected = game.inventory.getSelected();
     const selectedId = selected?.id ?? '';
     for (let i = 0; i < 9; i++) {
@@ -333,9 +385,33 @@ export class HUD {
       this.setStyle(this.contractPanel, 'questPanel', 'display', 'none');
     }
 
+    // --- the block under the crosshair ---
+    const hovered = player.hoverBlock;
+    if (hovered) {
+      this.targetTimer = 1.6;
+      this.setText(this.targetName, 'target', blockDef(hovered).name);
+    } else if (this.targetTimer > 0) {
+      this.targetTimer -= dt;
+    }
+    this.setStyle(this.targetName, 'targetOpacity', 'opacity', this.targetTimer > 0 ? '1' : '0');
+
+    // --- where the miner is ---
+    this.setText(
+      this.biomeChip,
+      'biome',
+      biomeName(game.world?.terrain?.biomeMap, player.pos),
+    );
+
     // --- vignettes ---
     this.setStyle(this.damageVignette, 'dmgVig', 'opacity', `${Math.max(0, 1 - hpRatio) * 0.9}`);
+    this.damageVignette.classList.toggle('critical', hpRatio < 0.34 && hpRatio > 0);
     this.setStyle(this.gasVignette, 'gasVig', 'opacity', `${Math.max(0, (player.gas - 35) / 65) * 0.9}`);
+
+    // --- hit marker ---
+    if (this.hitTimer > 0) {
+      this.hitTimer -= dt;
+      if (this.hitTimer <= 0) this.hitMarker.classList.remove('show');
+    }
 
     // --- fps ---
     this.setText(this.fpsBadge, 'fps', `${Math.round(fps)} fps`);
