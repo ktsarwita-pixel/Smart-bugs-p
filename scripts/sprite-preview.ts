@@ -29,6 +29,14 @@ const atlasImg = scale(atlasCtx.pixels, atlasCtx.width, atlasCtx.height, 6);
 writeFileSync(resolve(process.cwd(), '.cache/atlas.png'), encodePng(atlasImg.width, atlasImg.height, atlasImg.pixels));
 console.log(`atlas.png  ${atlasImg.width}x${atlasImg.height}  (${TILE_NAMES.length} tiles, ${ATLAS_COLS} per row)`);
 
+// The mining cracks.
+const { buildCrackStrip } = await import('../src/render/textures');
+const crackCanvas = buildCrackStrip();
+const crackCtx = contexts.get(crackCanvas) as MockContext;
+const crackImg = scale(crackCtx.pixels, crackCtx.width, crackCtx.height, 6);
+writeFileSync(resolve(process.cwd(), '.cache/cracks.png'), encodePng(crackImg.width, crackImg.height, crackImg.pixels));
+console.log(`cracks.png  ${crackImg.width}x${crackImg.height}  (10 stages)`);
+
 // The item icons, laid out in a grid.
 const { itemIcon } = await import('../src/render/textures');
 const iconIds = [

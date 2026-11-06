@@ -692,17 +692,28 @@ for (let i = 0; i < 10; i++) {
   const stage = i;
   painters[`crack_${stage}` as TileName] = P((p) => {
     p.clear(0, 0, 16, 16);
-    const strokes = stage + 1;
-    for (let s = 0; s < strokes; s++) {
-      let x = p.rng.int(3, 12);
-      let y = p.rng.int(3, 12);
-      const len = 2 + stage;
-      for (let i = 0; i < len; i++) {
-        p.set(x, y, 'rgba(10,8,6,0.85)');
-        x += p.rng.int(-1, 1);
-        y += p.rng.int(0, 1);
+    // Cracks radiate from the middle and grow with every stage.
+    const branches = stage + 1;
+    for (let b = 0; b < branches; b++) {
+      const angle = (b / branches) * Math.PI * 2 + p.rng.float(-0.45, 0.45);
+      let x = 8;
+      let y = 8;
+      const len = 3 + stage * 1.15;
+      for (let step = 0; step < len; step++) {
+        // The dark core of the crack plus a soft edge, so it reads from afar.
+        p.set(x, y, 'rgba(6,5,4,0.95)');
+        p.set(x + 1, y, 'rgba(26,20,16,0.5)');
+        p.set(x, y + 1, 'rgba(26,20,16,0.5)');
+        x += Math.round(Math.cos(angle) + p.rng.float(-0.6, 0.6));
+        y += Math.round(Math.sin(angle) + p.rng.float(-0.6, 0.6));
         if (x < 0 || y < 0 || x > 15 || y > 15) break;
       }
+    }
+    // A small chip in the middle once the block is nearly gone.
+    if (stage >= 6) {
+      const size = stage - 5;
+      p.rect(8 - size, 7, size * 2 + 1, 2, 'rgba(6,5,4,0.9)');
+      p.rect(7, 8 - size, 2, size * 2 + 1, 'rgba(6,5,4,0.9)');
     }
   });
 }
@@ -729,6 +740,39 @@ export function buildAtlas(): HTMLCanvasElement {
 
   atlasCanvas = canvas;
   return canvas;
+}
+
+/**
+ * A strip of the ten mining crack stages, drawn side by side. The game uses
+ * it as an overlay on the block that is being mined.
+ */
+export function buildCrackStrip(): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = 10 * TILE_PX;
+  canvas.height = TILE_PX;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  for (let stage = 0; stage < 10; stage++) {
+    const name = `crack_${stage}` as TileName;
+    const painter = painters[name];
+    const index = TILE_NAMES.indexOf(name);
+    if (painter) painter(new Painter2D(ctx, stage * TILE_PX, 0, new RNG(0x9e37 + index * 7919)));
+  }
+  return canvas;
+}
+
+/** The crack texture used for the block that is being mined. */
+export function createCrackTexture(): THREE.CanvasTexture {
+  const tex = new THREE.CanvasTexture(buildCrackStrip());
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.repeat.set(0.1, 1);
+  tex.offset.set(0, 0);
+  return tex;
 }
 
 export function createAtlasTexture(): THREE.CanvasTexture {

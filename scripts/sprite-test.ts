@@ -19,7 +19,7 @@ function check(name: string, condition: boolean, extra = ''): void {
 
 const { contexts } = await bootDom();
 
-const { buildAtlas, itemIcon, hasItemIcon } = await import('../src/render/textures');
+const { buildAtlas, itemIcon, hasItemIcon, buildCrackStrip } = await import('../src/render/textures');
 const { TILE_NAMES, ATLAS_COLS, TILE_PX } = await import('../src/world/tiles');
 const { allItemIds, itemDef } = await import('../src/game/items');
 const { blockDef, ITEM_TO_BLOCK } = await import('../src/world/blocks');
@@ -129,6 +129,25 @@ for (const id of ['stone', 'coal_ore', 'sulfur_crystal']) {
 // A block icon has to use the block's own tile, not the fallback gem.
 const oreIcon = itemIcon('coal_ore');
 check('ore blocks use the atlas', oreIcon.length > 100);
+
+// The mining cracks: ten stages in a strip.
+const crackStrip = buildCrackStrip();
+check('the crack strip holds ten stages', crackStrip.width === 160 && crackStrip.height === 16, `${crackStrip.width}x${crackStrip.height}`);
+{
+  const crackCtx = contexts.get(crackStrip)!;
+  let painted = 0;
+  for (let stage = 0; stage < 10; stage++) {
+    let stagePixels = 0;
+    for (let x = stage * TILE_PX; x < stage * TILE_PX + TILE_PX; x++) {
+      for (let y = 0; y < TILE_PX; y++) {
+        const i = (y * crackCtx.width + x) * 4;
+        if ((crackCtx.pixels[i + 3] ?? 0) > 40) stagePixels++;
+      }
+    }
+    if (stagePixels > 0) painted++;
+  }
+  check('every crack stage has marks', painted === 10, `${painted}/10`);
+}
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures > 0) {

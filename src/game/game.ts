@@ -23,6 +23,7 @@ import { createSkyMaterial, createVoxelMaterials, type SkyMaterial } from '../re
 import { ParticleSystem } from '../render/particles';
 import { Motes } from '../render/motes';
 import { dustColor } from '../render/palette';
+import { createCrackTexture } from '../render/textures';
 import { HUD } from '../ui/hud';
 import { Screens } from '../ui/screens';
 import { Minimap } from '../ui/minimap';
@@ -97,6 +98,9 @@ export class Game {
   motes!: Motes;
   /** The outline drawn around the block the miner is looking at. */
   selectionBox!: THREE.LineSegments;
+  /** The cracks that spread over the block that is being mined. */
+  crackMesh!: THREE.Mesh;
+  private crackTexture!: THREE.CanvasTexture;
   hud!: HUD;
   screens!: Screens;
   minimap = new Minimap();
@@ -285,6 +289,22 @@ export class Game {
     this.selectionBox.visible = false;
     this.selectionBox.renderOrder = 3;
 
+    // The cracks that spread over a block while it is being mined.
+    this.crackTexture = createCrackTexture();
+    this.crackMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1.004, 1.004, 1.004),
+      new THREE.MeshBasicMaterial({
+        map: this.crackTexture,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }),
+    );
+    this.crackMesh.visible = false;
+    this.crackMesh.renderOrder = 4;
+
     this.world.attach(this.scene, this.materials);
     this.items.attach(this.scene);
     this.mobs.attach(this.scene);
@@ -294,6 +314,7 @@ export class Game {
     this.scene.add(this.robot.shadow);
     this.scene.add(this.player.model.group);
     this.scene.add(this.selectionBox);
+    this.scene.add(this.crackMesh);
     this.scene.add(this.player.shadow);
 
     this.hud = new HUD(this);
@@ -526,6 +547,24 @@ export class Game {
     const material = this.selectionBox.material as THREE.LineBasicMaterial;
     // A slow pulse, so the outline is easy to spot in a dark cave.
     material.opacity = 0.38 + Math.sin(this.elapsed * 3.4) * 0.14;
+  }
+
+  /** Spreads the cracks over the block that is being mined. */
+  private updateCracks(): void {
+    const player = this.player;
+    const target = player.mineTarget;
+    if (!target || player.mineProgress <= 0.001) {
+      this.crackMesh.visible = false;
+      return;
+    }
+    const stage = Math.min(9, Math.floor(player.mineProgress * 10));
+    this.crackTexture.offset.x = stage / 10;
+    this.crackMesh.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
+    this.crackMesh.visible = true;
+    // The cracks darken with the light around them.
+    const light = this.world.lightAt(target.x, target.y + 1, target.z) / 15;
+    const material = this.crackMesh.material as THREE.MeshBasicMaterial;
+    material.color.setScalar(0.25 + light * 0.75);
   }
 
   /** A puff of dust under the miner's boots. */
@@ -1122,6 +1161,7 @@ export class Game {
     this.items.update(dt);
     this.particles.update(dt);
     this.updateSelectionBox();
+    this.updateCracks();
     const moteLight = this.world.lightAt(
       Math.floor(this.player.pos.x),
       Math.floor(this.player.pos.y + 1),
