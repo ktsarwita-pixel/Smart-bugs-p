@@ -1094,17 +1094,26 @@ const gridIcons: Record<string, (g: PixelGrid) => void> = {
     g.set(5, 9, '#0a0a0a');
     g.set(9, 6, '#262626');
   },
-  raw_iron: (g) => drawNugget(g, '#c99a78', '#e5b89a', '#a9785a'),
+  raw_iron: (g) => {
+    // A grey rock with rusty flecks of iron.
+    drawNugget(g, '#9d9891', '#c9c4bc', '#6f6b65');
+    g.set(7, 6, '#c99a6a');
+    g.set(9, 8, '#b8875a');
+    g.set(6, 9, '#d8ac7c');
+  },
   raw_gold: (g) => drawNugget(g, '#d8b64a', '#ffe680', '#a98f2c'),
   iron_ingot: (g) => drawIngot(g, '#d8d8dc', '#f4f4f8', '#a8a8b0'),
   gold_ingot: (g) => drawIngot(g, '#f0c33c', '#ffe89a', '#b48c14'),
   steel_ingot: (g) => drawIngot(g, '#9aa3ab', '#c6cfd7', '#667079'),
   clay: (g) => {
-    g.rect(5, 7, 6, 4, '#a89890');
-    g.rect(4, 8, 8, 3, '#a89890');
-    g.rect(6, 7, 3, 1, '#c4b6ae');
-    g.set(5, 10, '#8b7d76');
-    g.set(10, 9, '#8b7d76');
+    // A grey-blue lump of wet clay.
+    g.rect(5, 7, 6, 4, '#98a3aa');
+    g.rect(4, 8, 8, 3, '#98a3aa');
+    g.rect(6, 7, 3, 1, '#c3ced4');
+    g.rect(5, 8, 2, 1, '#c3ced4');
+    g.set(5, 10, '#727d85');
+    g.set(10, 9, '#727d85');
+    g.set(9, 10, '#7d8890');
   },
   stick: (g) => {
     g.diag(4, 12, 11, 4, '#8a5a2b');

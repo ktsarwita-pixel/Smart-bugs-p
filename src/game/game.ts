@@ -21,6 +21,8 @@ import { ItemManager } from '../entities/items';
 import { createAtlasTexture } from '../render/textures';
 import { createSkyMaterial, createVoxelMaterials, type SkyMaterial } from '../render/materials';
 import { ParticleSystem } from '../render/particles';
+import { Motes } from '../render/motes';
+import { dustColor } from '../render/palette';
 import { HUD } from '../ui/hud';
 import { Screens } from '../ui/screens';
 import { Minimap } from '../ui/minimap';
@@ -91,6 +93,10 @@ export class Game {
   mobs!: MobManager;
   items!: ItemManager;
   particles!: ParticleSystem;
+  /** Drifting dust in the air. */
+  motes!: Motes;
+  /** The outline drawn around the block the miner is looking at. */
+  selectionBox!: THREE.LineSegments;
   hud!: HUD;
   screens!: Screens;
   minimap = new Minimap();
@@ -266,13 +272,29 @@ export class Game {
     this.mobs = new MobManager(this);
     this.items = new ItemManager(this);
     this.particles = new ParticleSystem();
+    this.motes = new Motes();
+    this.selectionBox = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)),
+      new THREE.LineBasicMaterial({
+        color: 0x0d0b08,
+        transparent: true,
+        opacity: 0.5,
+        depthTest: true,
+      }),
+    );
+    this.selectionBox.visible = false;
+    this.selectionBox.renderOrder = 3;
 
     this.world.attach(this.scene, this.materials);
     this.items.attach(this.scene);
     this.mobs.attach(this.scene);
     this.particles.attach(this.scene);
+    this.motes.attach(this.scene);
     this.scene.add(this.robot.model.group);
+    this.scene.add(this.robot.shadow);
     this.scene.add(this.player.model.group);
+    this.scene.add(this.selectionBox);
+    this.scene.add(this.player.shadow);
 
     this.hud = new HUD(this);
     this.screens = new Screens(this);
@@ -488,67 +510,31 @@ export class Game {
   }
 
   spawnBlockParticles(position: THREE.Vector3, blockId: number, count = 10): void {
-    const color = new THREE.Color(0xffffff);
-    color.setHSL(0.1, 0.1, 0.55);
-    switch (blockId) {
-      case Block.STONE:
-      case Block.COBBLESTONE:
-      case Block.DEEPSLATE:
-        color.setHex(0x7d7d7d);
-        break;
-      case Block.DIRT:
-        color.setHex(0x8b5a2b);
-        break;
-      case Block.GRASS:
-        color.setHex(0x4f9b3a);
-        break;
-      case Block.SAND:
-      case Block.SULFUR_SAND:
-        color.setHex(0xddd3a0);
-        break;
-      case Block.SULFUR_ORE:
-      case Block.SULFUR_CRYSTAL:
-      case Block.SULFUR_BLOCK:
-        color.setHex(0xe8d24a);
-        break;
-      case Block.COAL_ORE:
-        color.setHex(0x2b2b2b);
-        break;
-      case Block.IRON_ORE:
-        color.setHex(0xd7a883);
-        break;
-      case Block.GOLD_ORE:
-      case Block.GOLD_BLOCK:
-        color.setHex(0xf0c33c);
-        break;
-      case Block.DIAMOND_ORE:
-        color.setHex(0x4fe0dc);
-        break;
-      case Block.LOG:
-      case Block.PLANK:
-        color.setHex(0x8a6338);
-        break;
-      case Block.LEAVES:
-        color.setHex(0x3f7a2c);
-        break;
-      case Block.LAVA:
-        color.setHex(0xff8b2a);
-        break;
-      case Block.WATER:
-        color.setHex(0x3f7fd8);
-        break;
-      case Block.ASH:
-        color.setHex(0x5d5a57);
-        break;
-      case Block.MOSSY_STONE:
-        color.setHex(0x5d7a46);
-        break;
-      default:
-        color.setHex(0xa0a0a0);
-    }
+    const color = dustColor(blockId);
     this.particles.spawn(position, color, count, 2.6, 0.4, 16, 0.85);
   }
 
+  /** Draws the outline around the block the miner is looking at. */
+  private updateSelectionBox(): void {
+    const target = this.player.hoverTarget;
+    if (!target) {
+      this.selectionBox.visible = false;
+      return;
+    }
+    this.selectionBox.visible = true;
+    this.selectionBox.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
+    const material = this.selectionBox.material as THREE.LineBasicMaterial;
+    // A slow pulse, so the outline is easy to spot in a dark cave.
+    material.opacity = 0.38 + Math.sin(this.elapsed * 3.4) * 0.14;
+  }
+
+  /** A puff of dust under the miner's boots. */
+  spawnFootDust(position: THREE.Vector3, blockId: number): void {
+    const color = dustColor(blockId);
+    this.particles.spawn(position, color, 3, 0.8, 0.28, 5, 0.45);
+  }
+
+  /** Break a block: drops, stats, particles and sounds. */
   /** Break a block: drops, stats, particles and sounds. */
   breakBlock(x: number, y: number, z: number, blockId: number): void {
     const def = blockDef(blockId);
@@ -577,6 +563,7 @@ export class Game {
 
     this.stats.add('blocksMined');
     this.audio.breakBlock(def.sound);
+    this.hud.showHitMarker('block');
     this.spawnBlockParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), blockId, 12);
 
     // Tool wear.
@@ -831,6 +818,7 @@ export class Game {
       const tool = this.currentTool();
       const damage = tool ? tool.def.tool?.damage ?? 1 : 2;
       this.mobs.hit(mob, damage, this.player.pos.x, this.player.pos.z);
+      this.hud.showHitMarker('mob');
       this.player.swingTimer = 0.28;
       return;
     }
@@ -1133,6 +1121,13 @@ export class Game {
     this.mobs.update(dt);
     this.items.update(dt);
     this.particles.update(dt);
+    this.updateSelectionBox();
+    const moteLight = this.world.lightAt(
+      Math.floor(this.player.pos.x),
+      Math.floor(this.player.pos.y + 1),
+      Math.floor(this.player.pos.z),
+    ) / 15;
+    this.motes.update(dt, this.player.pos, moteLight);
 
     if (this.input.state.place) {
       this.input.state.place = false;
